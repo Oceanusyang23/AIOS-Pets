@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { hasProductionModel } from './model-registry'
 import './PetStage.css'
 
 export type MotionState = 'idle' | 'wake' | 'listen' | 'think' | 'speak' | 'social' | 'handshake'
@@ -475,7 +476,7 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
           <i /><b>{agent.name}</b><span>{agent.role}</span>
         </button>)}
       </div>
-      <div className="motion-monitor"><span className="monitor-dot" /><b>{stateLabels[state]}</b><small>REALTIME RIG · 60 FPS</small></div>
+      <div className="motion-monitor"><span className="monitor-dot" /><b>{stateLabels[state]}</b><small>{agents.every(agent => hasProductionModel(agent.id)) ? 'GLB RIG · LIVE' : 'PROCEDURAL RIG · GLB READY'}</small></div>
       <div className="gesture-hint" data-visible={Boolean(hoveredHand)}><span>↕</span> 上下晃动或轻点手部 · 握手</div>
       <div className="motion-debug" aria-label="动作状态预览">
         {(Object.keys(stateLabels) as MotionState[]).map(key => <button key={key} className={state === key ? 'active' : ''} onClick={() => onStatePreview(key)}>{stateLabels[key]}</button>)}

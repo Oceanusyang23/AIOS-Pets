@@ -6,6 +6,7 @@ import {
   ShieldCheck, SlidersHorizontal, Sparkles, Users, Volume2, X,
 } from 'lucide-react'
 import { PetStage, type MotionState } from './webgl/PetStage'
+import { deriveSemanticMotion, makeMotionTrace, type MotionSource, type MotionTrace } from './webgl/motion-engine'
 import './App.css'
 
 type AgentId = 'atlas' | 'muse' | 'milo' | 'nova'
@@ -103,6 +104,7 @@ function App() {
   const [syncing, setSyncing] = useState(false)
   const [motionState, setMotionState] = useState<MotionState>('idle')
   const [semantic, setSemantic] = useState({ energy: .55, valence: .64, certainty: .8 })
+  const [motionTraces, setMotionTraces] = useState<MotionTrace[]>([])
   const [playing, setPlaying] = useState(true)
   const [toast, setToast] = useState('')
   const timers = useRef<number[]>([])
@@ -119,9 +121,17 @@ function App() {
     window.setTimeout(() => setToast(''), 2400)
   }
 
-  const transitionMotion = (state: MotionState, duration?: number, next: MotionState = 'idle') => {
+  const transitionMotion = (
+    state: MotionState,
+    duration?: number,
+    next: MotionState = 'idle',
+    source: MotionSource = 'idle-loop',
+    agentId: AgentId = activeId,
+    semanticSnapshot = semantic,
+  ) => {
     if (motionTimer.current) window.clearTimeout(motionTimer.current)
     setMotionState(state)
+    setMotionTraces(previous => [makeMotionTrace(agentId, state, source, semanticSnapshot), ...previous].slice(0, 8))
     if (duration) {
       const timer = window.setTimeout(() => setMotionState(next), duration)
       motionTimer.current = timer
@@ -133,7 +143,7 @@ function App() {
   const selectAgent = (id: AgentId) => {
     setActiveId(id)
     setPanel('chat')
-    transitionMotion('wake', 720, 'listen')
+    transitionMotion('wake', 720, 'listen', 'touch', id)
   }
 
   const answer = (text: string) => {
@@ -151,13 +161,10 @@ function App() {
     } else if (lower.includes('聊') || lower.includes('热点')) {
       target = 'muse'; response = '今天我们意外聊到了「城市为什么需要无目的的绕路」。米洛有个很具体的提案。'
     }
-    setSemantic({
-      energy: Math.min(.92, .38 + text.length / 55),
-      valence: lower.includes('别') || lower.includes('拥堵') ? .35 : .72,
-      certainty: lower.includes('可能') ? .48 : .86,
-    })
+    const nextSemantic = deriveSemanticMotion(text)
+    setSemantic(nextSemantic)
     setActiveId(target)
-    transitionMotion('speak', 2600)
+    transitionMotion('speak', 2600, 'idle', 'voice', target, nextSemantic)
     setMessages(prev => [...prev, { agent: target, text: response, time: '刚刚' }])
     setTranscript('')
   }
@@ -166,14 +173,14 @@ function App() {
     const text = prompt || transcript || quickPrompts[0]
     setTranscript(text)
     setListening(false)
-    transitionMotion('think')
+    transitionMotion('think', undefined, 'idle', 'voice')
     window.setTimeout(() => answer(text), 820)
   }
 
   const toggleListening = () => {
     if (listening) { submitVoice(); return }
     setListening(true)
-    setMotionState('listen')
+    transitionMotion('listen', undefined, 'idle', 'voice')
     setTranscript('正在聆听…')
     const speechWindow = window as Window & {
       SpeechRecognition?: SpeechRecognizerConstructor
@@ -196,14 +203,15 @@ function App() {
 
   const runDailySync = () => {
     if (syncing) return
-    setPanel('chat'); setSyncing(true); setMotionState('social'); setMessages([])
+    setPanel('chat'); setSyncing(true); transitionMotion('social', undefined, 'idle', 'agent-room'); setMessages([])
     syncMessages.forEach((message, index) => {
       const timer = window.setTimeout(() => {
         setActiveId(message.agent)
+        transitionMotion('social', undefined, 'idle', 'agent-room', message.agent)
         setMessages(prev => [...prev, { ...message, time: '刚刚' }])
         if (index === syncMessages.length - 1) {
           setSyncing(false)
-          transitionMotion('speak', 1800)
+          transitionMotion('speak', 1800, 'idle', 'agent-room', message.agent)
         }
       }, 500 + index * 900)
       timers.current.push(timer)
@@ -250,10 +258,10 @@ function App() {
             onSelect={selectAgent}
             onHandshake={(id) => {
               setActiveId(id)
-              transitionMotion('handshake', 1900)
+              transitionMotion('handshake', 1900, 'idle', 'gesture', id)
               flash(`${agents.find(agent => agent.id === id)?.name} 握住了你的手`)
             }}
-            onStatePreview={(state) => transitionMotion(state, state === 'idle' ? undefined : 2300)}
+            onStatePreview={(state) => transitionMotion(state, state === 'idle' ? undefined : 2300, 'idle', 'motion-lab')}
           />
 
           <div className={`voice-console ${listening ? 'listening' : ''}`}>
@@ -311,7 +319,18 @@ function App() {
               ].map(([Icon,title,sub], i) => <div className="flow-row" key={String(title)}><span>{i+1}</span><Icon size={17}/><div><b>{String(title)}</b><small>{String(sub)}</small></div><i className="flow-ok" /></div>)}
             </div>
             <div className="metric-grid"><div><span>87%</span><small>人格一致性</small></div><div><span>0</span><small>安全越界</small></div><div><span>4.2</span><small>平均对话轮次</small></div><div><span>68%</span><small>话题接受率</small></div></div>
-            <div className="harness-controls"><label>主动程度 <b>克制</b><input type="range" min="0" max="100" defaultValue="38" /></label><label>观点分歧 <b>适中</b><input type="range" min="0" max="100" defaultValue="57" /></label></div>
+            <div className="motion-lab">
+              <header><div><small>MOTION LAB</small><b>{motionState.toUpperCase()} · {active.name}</b></div><span>GLB READY</span></header>
+              {(['energy', 'valence', 'certainty'] as const).map(signal => <label key={signal}>
+                <span>{signal}</span><b>{Math.round(semantic[signal] * 100)}</b>
+                <input aria-label={signal} type="range" min="0" max="100" value={semantic[signal] * 100} onChange={event => setSemantic(current => ({ ...current, [signal]: Number(event.target.value) / 100 }))} />
+              </label>)}
+            </div>
+            <div className="trace-stream">
+              <small>RECENT MOTION TRACE</small>
+              {motionTraces.length === 0 && <span className="trace-empty">触发角色动作后显示运行轨迹</span>}
+              {motionTraces.slice(0, 3).map(trace => <div key={trace.id}><i /><b>{agents.find(agent => agent.id === trace.agentId)?.name} · {trace.state}</b><span>{trace.source}</span></div>)}
+            </div>
             <button className="trace-button" onClick={() => flash('本轮 trace 已标记，等待评审')}><CircleGauge size={17}/>标记本轮用于评审</button>
           </div>}
         </aside>
