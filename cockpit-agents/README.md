@@ -2,6 +2,8 @@
 
 一个 2048×1152 车机概念的可交互 React 原型，包含四个具有独立人格与兴趣的 Agent、语音入口、每日热点雷达、Agent 圆桌，以及用于持续迭代的 harness 控制面板。
 
+角色舞台使用 Three.js WebGL 实时渲染。四个角色共享 Root / Spine / Head / Ear / Shoulder / Elbow / Hand 骨骼协议，但拥有不同的动作节奏、幅度、开放度与身体重心。Idle、Wake、Listen、Think、Speak、Social、Handshake 均由状态与连续语义参数实时合成。
+
 ## Run
 
 ```bash
@@ -9,6 +11,8 @@ pnpm dev
 ```
 
 打开 Vite 输出的本地地址。点击角色切换单聊对象；点击麦克风可调用浏览器语音识别，不支持时可使用示例指令；“开启今日圆桌”会运行一段确定性的多 Agent 对话。
+
+将指针移到角色手部会显示手势提示。轻点手部，或像手/手表射线一样上下晃动超过阈值，会触发可中断的握手动作。舞台顶部的状态栏可用于逐项预览动作状态。
 
 合并到 GitHub `main` 后，仓库内的 Pages workflow 会自动构建并发布公网版本。首次使用时需在仓库 Settings → Pages 中选择 GitHub Actions 作为发布源。
 

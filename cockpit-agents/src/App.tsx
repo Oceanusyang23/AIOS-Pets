@@ -5,6 +5,7 @@ import {
   Music2, Navigation, Pause, Play, Radio, Search, Settings2,
   ShieldCheck, SlidersHorizontal, Sparkles, Users, Volume2, X,
 } from 'lucide-react'
+import { PetStage, type MotionState } from './webgl/PetStage'
 import './App.css'
 
 type AgentId = 'atlas' | 'muse' | 'milo' | 'nova'
@@ -42,19 +43,19 @@ const agents: Agent[] = [
     avatar: '🧭', mood: '正在研究雨天路线', intro: '路交给我。你只需要决定，今天想去哪里。',
   },
   {
+    id: 'nova', name: '诺瓦', role: '车辆守护者', trait: '直接 · 理性型',
+    interest: '汽车科技 / 安全', color: '#ff575f', soft: 'rgba(255, 87, 95,.18)',
+    avatar: '✦', mood: '车辆状态一切正常', intro: '我不制造焦虑。真正需要你知道的，我会先说。',
+  },
+  {
     id: 'muse', name: '缪思', role: '音乐策展人', trait: '感性 · 好奇型',
     interest: '新歌 / 声音艺术', color: '#bf8bff', soft: 'rgba(179, 105, 255,.2)',
     avatar: '♫', mood: '挖到一张午夜新专', intro: '我会听你的语气，也会替沿途挑一段刚好的声音。',
   },
   {
     id: 'milo', name: '米洛', role: '生活探索家', trait: '松弛 · 吃货型',
-    interest: '餐厅 / 城市活动', color: '#ffbd68', soft: 'rgba(255, 173, 69,.2)',
+    interest: '餐厅 / 城市活动', color: '#ff9c48', soft: 'rgba(255, 156, 72,.2)',
     avatar: '☕', mood: '收藏了 3 家小店', intro: '别急着回家，我总能找到一处值得拐进去的地方。',
-  },
-  {
-    id: 'nova', name: '诺瓦', role: '车辆守护者', trait: '直接 · 理性型',
-    interest: '汽车科技 / 安全', color: '#75ffb1', soft: 'rgba(64, 255, 151,.18)',
-    avatar: '✦', mood: '车辆状态一切正常', intro: '我不制造焦虑。真正需要你知道的，我会先说。',
   },
 ]
 
@@ -100,16 +101,39 @@ function App() {
   const [transcript, setTranscript] = useState('')
   const [panel, setPanel] = useState<'chat' | 'harness' | 'topics'>('chat')
   const [syncing, setSyncing] = useState(false)
+  const [motionState, setMotionState] = useState<MotionState>('idle')
+  const [semantic, setSemantic] = useState({ energy: .55, valence: .64, certainty: .8 })
   const [playing, setPlaying] = useState(true)
   const [toast, setToast] = useState('')
   const timers = useRef<number[]>([])
+  const motionTimer = useRef<number | null>(null)
   const active = useMemo(() => agents.find(a => a.id === activeId)!, [activeId])
 
-  useEffect(() => () => timers.current.forEach(window.clearTimeout), [])
+  useEffect(() => () => {
+    timers.current.forEach(window.clearTimeout)
+    if (motionTimer.current) window.clearTimeout(motionTimer.current)
+  }, [])
 
   const flash = (text: string) => {
     setToast(text)
     window.setTimeout(() => setToast(''), 2400)
+  }
+
+  const transitionMotion = (state: MotionState, duration?: number, next: MotionState = 'idle') => {
+    if (motionTimer.current) window.clearTimeout(motionTimer.current)
+    setMotionState(state)
+    if (duration) {
+      const timer = window.setTimeout(() => setMotionState(next), duration)
+      motionTimer.current = timer
+    } else {
+      motionTimer.current = null
+    }
+  }
+
+  const selectAgent = (id: AgentId) => {
+    setActiveId(id)
+    setPanel('chat')
+    transitionMotion('wake', 720, 'listen')
   }
 
   const answer = (text: string) => {
@@ -127,7 +151,13 @@ function App() {
     } else if (lower.includes('聊') || lower.includes('热点')) {
       target = 'muse'; response = '今天我们意外聊到了「城市为什么需要无目的的绕路」。米洛有个很具体的提案。'
     }
+    setSemantic({
+      energy: Math.min(.92, .38 + text.length / 55),
+      valence: lower.includes('别') || lower.includes('拥堵') ? .35 : .72,
+      certainty: lower.includes('可能') ? .48 : .86,
+    })
     setActiveId(target)
+    transitionMotion('speak', 2600)
     setMessages(prev => [...prev, { agent: target, text: response, time: '刚刚' }])
     setTranscript('')
   }
@@ -136,12 +166,14 @@ function App() {
     const text = prompt || transcript || quickPrompts[0]
     setTranscript(text)
     setListening(false)
-    window.setTimeout(() => answer(text), 420)
+    transitionMotion('think')
+    window.setTimeout(() => answer(text), 820)
   }
 
   const toggleListening = () => {
     if (listening) { submitVoice(); return }
     setListening(true)
+    setMotionState('listen')
     setTranscript('正在聆听…')
     const speechWindow = window as Window & {
       SpeechRecognition?: SpeechRecognizerConstructor
@@ -156,7 +188,7 @@ function App() {
         const text = Array.from(event.results, result => result[0].transcript).join('')
         setTranscript(text)
       }
-      recognition.onend = () => setListening(false)
+      recognition.onend = () => { setListening(false); if (!transcript) setMotionState('idle') }
       recognition.onerror = () => { setListening(false); setTranscript(''); flash('未获得麦克风输入，可点下方示例体验') }
       recognition.start()
     }
@@ -164,12 +196,15 @@ function App() {
 
   const runDailySync = () => {
     if (syncing) return
-    setPanel('chat'); setSyncing(true); setMessages([])
+    setPanel('chat'); setSyncing(true); setMotionState('social'); setMessages([])
     syncMessages.forEach((message, index) => {
       const timer = window.setTimeout(() => {
         setActiveId(message.agent)
         setMessages(prev => [...prev, { ...message, time: '刚刚' }])
-        if (index === syncMessages.length - 1) setSyncing(false)
+        if (index === syncMessages.length - 1) {
+          setSyncing(false)
+          transitionMotion('speak', 1800)
+        }
       }, 500 + index * 900)
       timers.current.push(timer)
     })
@@ -206,18 +241,20 @@ function App() {
             <button className="sync-button" onClick={runDailySync}><Users size={17} />{syncing ? '圆桌进行中…' : '开启今日圆桌'}<ChevronRight size={16} /></button>
           </div>
 
-          <div className="agent-stage">
-            <div className="horizon-line" />
-            {agents.map((agent) => (
-              <button key={agent.id} className={`agent-pod ${activeId === agent.id ? 'selected' : ''}`}
-                style={{ '--agent': agent.color, '--agent-soft': agent.soft } as React.CSSProperties}
-                onClick={() => { setActiveId(agent.id); setPanel('chat') }}>
-                <div className="status-pill"><i /> {activeId === agent.id ? '在听' : agent.mood}</div>
-                <AgentAvatar agent={agent} active={activeId === agent.id} speaking={syncing && activeId === agent.id} />
-                <strong>{agent.name}</strong><span>{agent.role}</span><small>{agent.trait}</small>
-              </button>
-            ))}
-          </div>
+          <PetStage
+            agents={agents}
+            activeId={activeId}
+            state={motionState}
+            syncing={syncing}
+            semantic={semantic}
+            onSelect={selectAgent}
+            onHandshake={(id) => {
+              setActiveId(id)
+              transitionMotion('handshake', 1900)
+              flash(`${agents.find(agent => agent.id === id)?.name} 握住了你的手`)
+            }}
+            onStatePreview={(state) => transitionMotion(state, state === 'idle' ? undefined : 2300)}
+          />
 
           <div className={`voice-console ${listening ? 'listening' : ''}`}>
             <div className="voice-copy"><small>{listening ? 'LISTENING' : `正在与 ${active.name} 对话`}</small><b>{transcript || `“${active.name}，我想……”`}</b></div>
