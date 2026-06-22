@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import conceptImage from '../assets/pets-concept.png'
 import type { MotionState, PetId } from './PetStage'
 import './SpriteStage.css'
+import './SpriteStageMotion.css'
 
 type PetInfo = { id: PetId; name: string; role: string; color: string }
 type Props = {
@@ -16,6 +17,16 @@ type Props = {
 
 const stateLabels: Record<MotionState, string> = {
   idle: '待机', wake: '唤醒', listen: '聆听', think: '思考', speak: '对话', social: '互聊', handshake: '握手',
+}
+
+const stateEffects: Record<MotionState, { symbol: string; label: string }> = {
+  idle: { symbol: '·', label: '微呼吸 / 环境注视' },
+  wake: { symbol: '✦', label: '注意力已聚焦' },
+  listen: { symbol: '◖  ◗', label: '正在捕捉你的声音' },
+  think: { symbol: '· · ·', label: '正在形成回应' },
+  speak: { symbol: '≋', label: '语义驱动动作' },
+  social: { symbol: '↔', label: '伙伴视线同步' },
+  handshake: { symbol: '↕', label: '触觉确认' },
 }
 
 const positions: Record<PetId, { left: string; width: string; handLeft: string; handTop: string }> = {
@@ -55,15 +66,14 @@ export function SpriteStage({ agents, activeId, state, syncing, onSelect, onHand
     <div className="sprite-vignette" />
     {agents.map(agent => <div key={agent.id} className={`sprite-character sprite-${agent.id} ${agent.id === activeId ? 'active' : ''}`} style={{ '--sprite-color': agent.color } as React.CSSProperties}>
       <img className="sprite-source sprite-body" src={conceptImage} alt="" />
-      {agent.id === 'atlas' && <>
-        <img className="sprite-source sprite-atlas-head" src={conceptImage} alt="" />
-        <img className="sprite-source sprite-atlas-phone" src={conceptImage} alt="" />
-        <img className="sprite-source sprite-atlas-hand" src={conceptImage} alt="" />
-      </>}
+      <img className={`sprite-source sprite-part part-${agent.id}-head`} src={conceptImage} alt="" />
+      <img className={`sprite-source sprite-part part-${agent.id}-primary`} src={conceptImage} alt="" />
+      <img className={`sprite-source sprite-part part-${agent.id}-secondary`} src={conceptImage} alt="" />
     </div>)}
     {agents.map(agent => <button key={agent.id} className={`sprite-select ${agent.id === activeId ? 'active' : ''}`} style={{ left: positions[agent.id].left, width: positions[agent.id].width, '--sprite-color': agent.color } as React.CSSProperties} onClick={() => onSelect(agent.id)} aria-label={`${agent.name} ${agent.role}`}><i /><b>{agent.name}</b><span>{agent.role}</span></button>)}
     {agents.map(agent => <button key={`hand-${agent.id}`} className="sprite-hand-hit" style={{ left: positions[agent.id].handLeft, top: positions[agent.id].handTop } as React.CSSProperties} aria-label={`和${agent.name}握手`} onPointerEnter={() => setHoveredHand(agent.id)} onPointerLeave={() => setHoveredHand(null)} onPointerDown={event => beginGesture(agent.id, event)} onPointerMove={moveGesture} onPointerUp={endGesture} />)}
     <div className="sprite-status"><i /><div><b>{stateLabels[state]} · {agents.find(agent => agent.id === activeId)?.name}</b><span>2.5D DESIGN FIDELITY PILOT</span></div></div>
+    <div className="sprite-state-effect" data-state={state}><b>{stateEffects[state].symbol}</b><span>{stateEffects[state].label}</span></div>
     <div className="sprite-gesture-hint" data-visible={Boolean(hoveredHand)}><b>↕</b> 轻点或上下晃动手部</div>
     <div className="sprite-motion-debug" aria-label="2.5D 动作预览">{(Object.keys(stateLabels) as MotionState[]).map(key => <button key={key} className={state === key ? 'active' : ''} onClick={() => onStatePreview(key)}>{stateLabels[key]}</button>)}</div>
   </div>

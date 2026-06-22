@@ -18,6 +18,8 @@ pnpm dev
 
 默认舞台现采用 Figma 高保真概念图的 2.5D 分层合成，避免程序化低模损失角色毛发、服装与配饰细节。阿拓已拆分身体、头部、手机与手部动作层作为首个视觉标准样本；“2.5D 视觉 / 骨骼实验”按钮可在高保真方案与原始实时 rig sandbox 之间切换。
 
+四个角色现均具有独立的头部与双手动作层：阿拓侧重路线确认与手机反馈，诺瓦使用克制点头和拇指确认，缪思使用节拍摆动与抬手表达，米洛使用饮料举杯与开放式回应。Listen、Think、Speak、Social、Handshake 会调用不同的角色动作词汇，而不是统一模板。
+
 合并到 GitHub `main` 后，仓库内的 Pages workflow 会自动构建并发布公网版本。首次使用时需在仓库 Settings → Pages 中选择 GitHub Actions 作为发布源。
 
 ## Prototype boundary

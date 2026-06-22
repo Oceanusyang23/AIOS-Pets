@@ -1,0 +1,55 @@
+.sprite-part{z-index:5;transform:translateZ(0);will-change:transform,filter}
+
+.part-atlas-head{clip-path:polygon(10% 22%,26% 22%,28% 50%,9% 50%);transform-origin:18% 45%}
+.part-atlas-primary{clip-path:polygon(5% 35%,13% 34%,14% 57%,5% 58%);transform-origin:11% 54%}
+.part-atlas-secondary{clip-path:polygon(20% 50%,29% 49%,29% 70%,20% 71%);transform-origin:23% 57%}
+.part-nova-head{clip-path:polygon(32% 21%,46% 22%,48% 49%,31% 49%);transform-origin:39% 45%}
+.part-nova-primary{clip-path:polygon(43% 42%,51% 41%,51% 62%,43% 63%);transform-origin:45% 58%}
+.part-nova-secondary{clip-path:polygon(29% 53%,37% 51%,38% 72%,29% 73%);transform-origin:35% 59%}
+.part-muse-head{clip-path:polygon(53% 20%,66% 20%,67% 48%,52% 49%);transform-origin:60% 44%}
+.part-muse-primary{clip-path:polygon(64% 22%,72% 21%,72% 51%,64% 51%);transform-origin:67% 49%}
+.part-muse-secondary{clip-path:polygon(50% 42%,58% 41%,59% 62%,49% 63%);transform-origin:55% 57%}
+.part-milo-head{clip-path:polygon(75% 21%,90% 21%,91% 49%,74% 49%);transform-origin:82% 45%}
+.part-milo-primary{clip-path:polygon(88% 34%,96% 34%,96% 61%,88% 61%);transform-origin:90% 56%}
+.part-milo-secondary{clip-path:polygon(70% 46%,79% 45%,80% 68%,70% 69%);transform-origin:77% 57%}
+
+.sprite-stage[data-state="listen"] .sprite-character.active .sprite-part{filter:brightness(1.035)}
+.sprite-stage[data-state="listen"] .sprite-character.active .part-atlas-head{animation:role-head-listen-left 1.8s ease-in-out infinite}
+.sprite-stage[data-state="listen"] .sprite-character.active .part-nova-head{animation:role-head-listen-small 2.2s ease-in-out infinite}
+.sprite-stage[data-state="listen"] .sprite-character.active .part-muse-head{animation:role-head-listen-rhythm 1.25s ease-in-out infinite}
+.sprite-stage[data-state="listen"] .sprite-character.active .part-milo-head{animation:role-head-listen-open 1.9s ease-in-out infinite}
+
+.sprite-stage[data-state="think"] .sprite-character.active .part-atlas-head{animation:role-head-think 2.3s ease-in-out infinite}
+.sprite-stage[data-state="think"] .sprite-character.active .part-nova-head{animation:role-head-think-small 2.6s ease-in-out infinite}
+.sprite-stage[data-state="think"] .sprite-character.active .part-muse-head{animation:role-head-think-rhythm 1.8s ease-in-out infinite}
+.sprite-stage[data-state="think"] .sprite-character.active .part-milo-head{animation:role-head-think-open 2.1s ease-in-out infinite}
+
+.sprite-stage[data-state="speak"] .sprite-character.active .part-atlas-primary{animation:atlas-route-confirm .9s ease-in-out infinite}
+.sprite-stage[data-state="speak"] .sprite-character.active .part-nova-primary{animation:nova-confirm .72s ease-in-out infinite}
+.sprite-stage[data-state="speak"] .sprite-character.active .part-muse-primary{animation:muse-beat .68s ease-in-out infinite alternate}
+.sprite-stage[data-state="speak"] .sprite-character.active .part-milo-primary{animation:milo-toast .88s ease-in-out infinite}
+
+.sprite-stage[data-state="handshake"] .sprite-character.active .sprite-part[class*="secondary"]{animation:role-handshake .34s ease-in-out infinite alternate}
+.sprite-stage[data-state="social"] .sprite-character:not(.active) .sprite-part[class*="head"],.sprite-stage[data-syncing="true"] .sprite-character:not(.active) .sprite-part[class*="head"]{animation:role-social-gaze 1.7s ease-in-out infinite}
+
+.sprite-state-effect{position:absolute;z-index:8;left:50%;bottom:70px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;pointer-events:none;color:#153747;text-shadow:0 1px 8px rgba(255,255,255,.9)}.sprite-state-effect b{font-family:'DM Mono';font-size:17px;letter-spacing:.16em;color:#1687a5}.sprite-state-effect span{font-size:7px;letter-spacing:.08em;margin-top:2px;color:#496b79}.sprite-state-effect[data-state="idle"]{opacity:.42}.sprite-state-effect[data-state="listen"] b{animation:listen-pulse 1.2s ease-in-out infinite}.sprite-state-effect[data-state="think"] b{animation:thinking-dots 1.5s ease-in-out infinite}.sprite-state-effect[data-state="speak"] b{animation:speaking-wave .55s ease-in-out infinite alternate}.sprite-state-effect[data-state="social"] b{animation:social-link 1.3s ease-in-out infinite}.sprite-state-effect[data-state="handshake"] b{animation:handshake-pulse .35s ease-in-out infinite alternate}
+
+@keyframes role-head-listen-left{0%,100%{transform:rotate(0)}50%{transform:rotate(-1.15deg) translate(-1px,-1px)}}
+@keyframes role-head-listen-small{0%,100%{transform:rotate(0)}50%{transform:rotate(.42deg) translateY(-1px)}}
+@keyframes role-head-listen-rhythm{0%,100%{transform:rotate(-.35deg)}50%{transform:rotate(1deg) translateY(-2px)}}
+@keyframes role-head-listen-open{0%,100%{transform:rotate(0)}50%{transform:rotate(-.7deg) translate(-1px,-1px)}}
+@keyframes role-head-think{0%,100%{transform:rotate(0)}50%{transform:rotate(1.45deg) translate(2px,-2px)}}
+@keyframes role-head-think-small{0%,100%{transform:translateY(0)}50%{transform:translateY(-1px) rotate(-.35deg)}}
+@keyframes role-head-think-rhythm{0%,100%{transform:rotate(-.4deg)}50%{transform:rotate(1.25deg) translateY(-2px)}}
+@keyframes role-head-think-open{0%,100%{transform:rotate(0)}50%{transform:rotate(.8deg) translate(1px,-1px)}}
+@keyframes atlas-route-confirm{0%,100%{transform:translate(0,0) rotate(0)}50%{transform:translate(2px,-3px) rotate(1deg)}}
+@keyframes nova-confirm{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px) rotate(-1deg)}}
+@keyframes muse-beat{to{transform:translate(3px,-5px) rotate(1.5deg)}}
+@keyframes milo-toast{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px) rotate(-1deg)}}
+@keyframes role-handshake{to{transform:translate(6px,-6px) rotate(-2deg) scale(1.012)}}
+@keyframes role-social-gaze{0%,100%{transform:rotate(0)}50%{transform:rotate(.55deg) translateY(-1px)}}
+@keyframes listen-pulse{0%,100%{transform:scale(.85);opacity:.45}50%{transform:scale(1.12);opacity:1}}
+@keyframes thinking-dots{0%,100%{letter-spacing:.08em;opacity:.5}50%{letter-spacing:.36em;opacity:1}}
+@keyframes speaking-wave{to{transform:scaleX(1.35);opacity:.65}}
+@keyframes social-link{50%{transform:scaleX(1.35);opacity:.65}}
+@keyframes handshake-pulse{to{transform:translateY(-3px)}}
