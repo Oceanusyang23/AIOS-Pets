@@ -4,11 +4,14 @@ import {
   Coffee, Compass, Gauge, Home, Map, MessageCircleMore, Mic,
   Music2, Navigation, Pause, Play, Radio, Search, Settings2,
   ShieldCheck, SlidersHorizontal, Sparkles, Users, Volume2, X,
+  UploadCloud, CheckCircle2, AlertTriangle,
 } from 'lucide-react'
 import { PetStage, type MotionState } from './webgl/PetStage'
 import { SpriteStage } from './webgl/SpriteStage'
 import { deriveSemanticMotion, makeMotionTrace, type MotionSource, type MotionTrace } from './webgl/motion-engine'
 import { getModelReadiness } from './webgl/model-registry'
+import { petModelRegistry } from './webgl/model-registry'
+import { validatePetRigFile, type RigValidationReport } from './webgl/rig-loader'
 import './App.css'
 
 type AgentId = 'atlas' | 'muse' | 'milo' | 'nova'
@@ -108,6 +111,8 @@ function App() {
   const [visualMode, setVisualMode] = useState<'sprite' | 'rig'>('sprite')
   const [semantic, setSemantic] = useState({ energy: .55, valence: .64, certainty: .8 })
   const [motionTraces, setMotionTraces] = useState<MotionTrace[]>([])
+  const [modelReport, setModelReport] = useState<RigValidationReport | null>(null)
+  const [modelFileName, setModelFileName] = useState('')
   const [playing, setPlaying] = useState(true)
   const [toast, setToast] = useState('')
   const timers = useRef<number[]>([])
@@ -228,6 +233,19 @@ function App() {
     flash(`${agents.find(agent => agent.id === id)?.name} 握住了你的手`)
   }
 
+  const handleModelFile = async (file?: File) => {
+    if (!file) return
+    setModelFileName(file.name)
+    try {
+      const report = await validatePetRigFile(file, petModelRegistry.atlas)
+      setModelReport(report)
+      flash(report.valid ? '阿拓 GLB 骨骼契约通过' : `GLB 缺少 ${report.missing.length} 个必要骨骼`)
+    } catch {
+      setModelReport(null)
+      flash('无法解析该 GLB，请检查文件是否完整')
+    }
+  }
+
   return (
     <main className="cockpit-shell">
       <div className="ambient ambient-one" /><div className="ambient ambient-two" />
@@ -340,6 +358,11 @@ function App() {
                 <input aria-label={signal} type="range" min="0" max="100" value={semantic[signal] * 100} onChange={event => setSemantic(current => ({ ...current, [signal]: Number(event.target.value) / 100 }))} />
               </label>)}
             </div>
+            <label className={`model-gate ${modelReport ? (modelReport.valid ? 'valid' : 'invalid') : ''}`}>
+              <input type="file" accept=".glb,model/gltf-binary" onChange={event => void handleModelFile(event.target.files?.[0])} />
+              <span className="model-gate-icon">{modelReport ? (modelReport.valid ? <CheckCircle2 size={18}/> : <AlertTriangle size={18}/>) : <UploadCloud size={18}/>}</span>
+              <div><small>ATLAS · GLB GATE</small><b>{modelFileName || '拖入或选择阿拓 GLB'}</b><em>{modelReport ? `${modelReport.resolved.length}/12 bones · ${modelReport.meshCount} meshes${modelReport.missing.length ? ` · 缺少 ${modelReport.missing.join(', ')}` : ''}` : '仅本地解析，不会上传文件'}</em></div>
+            </label>
             <div className="trace-stream">
               <small>RECENT MOTION TRACE</small>
               {motionTraces.length === 0 && <span className="trace-empty">触发角色动作后显示运行轨迹</span>}

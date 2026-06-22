@@ -52,3 +52,13 @@ export async function loadPetRig(entry: PetModelEntry, loader = new GLTFLoader()
   const report = validatePetRig(gltf.scene, entry)
   return bindPetRig(gltf.scene, entry, report)
 }
+
+export async function validatePetRigFile(
+  file: File,
+  entry: PetModelEntry,
+  loader = new GLTFLoader(),
+): Promise<RigValidationReport> {
+  const buffer = await file.arrayBuffer()
+  const gltf = await loader.parseAsync(buffer, '')
+  return validatePetRig(gltf.scene, entry)
+}
