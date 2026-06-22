@@ -13,7 +13,7 @@ export type PetModelEntry = {
   boneMap: Record<RigBoneName, string>
 }
 
-const standardBoneMap: Record<RigBoneName, string> = {
+export const standardBoneMap: Record<RigBoneName, string> = {
   root: 'Root', spine: 'Spine', head: 'Head', leftEar: 'Ear_L', rightEar: 'Ear_R',
   leftShoulder: 'Shoulder_L', rightShoulder: 'Shoulder_R', leftElbow: 'Elbow_L', rightElbow: 'Elbow_R',
   leftHand: 'Hand_L', rightHand: 'Hand_R', mouth: 'Mouth',
@@ -27,6 +27,12 @@ export const petModelRegistry: Record<PetId, PetModelEntry> = {
 }
 
 export const hasProductionModel = (id: PetId) => Boolean(petModelRegistry[id].glbUrl)
+
+export const getModelReadiness = () => {
+  const entries = Object.values(petModelRegistry)
+  const ready = entries.filter(entry => entry.glbUrl).length
+  return { ready, total: entries.length, fallback: entries.length - ready }
+}
 
 /**
  * Drop a GLB into public/models and set glbUrl here. The runtime adapter can then

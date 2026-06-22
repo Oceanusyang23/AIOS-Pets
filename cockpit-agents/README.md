@@ -4,6 +4,8 @@
 
 角色舞台使用 Three.js WebGL 实时渲染。四个角色共享 Root / Spine / Head / Ear / Shoulder / Elbow / Hand 骨骼协议，但拥有不同的动作节奏、幅度、开放度与身体重心。Idle、Wake、Listen、Think、Speak、Social、Handshake 均由状态与连续语义参数实时合成。
 
+正式角色通过 `model-registry.ts` 注册 GLB 地址，由 `rig-loader.ts` 加载并执行十二骨骼门禁校验。模型缺少任何必要骨骼时不会进入运行时，界面会继续使用程序化 fallback。运行 `pnpm test` 可回归动作优先级、语义信号和模型契约。
+
 ## Run
 
 ```bash

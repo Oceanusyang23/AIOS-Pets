@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { PetStage, type MotionState } from './webgl/PetStage'
 import { deriveSemanticMotion, makeMotionTrace, type MotionSource, type MotionTrace } from './webgl/motion-engine'
+import { getModelReadiness } from './webgl/model-registry'
 import './App.css'
 
 type AgentId = 'atlas' | 'muse' | 'milo' | 'nova'
@@ -110,6 +111,7 @@ function App() {
   const timers = useRef<number[]>([])
   const motionTimer = useRef<number | null>(null)
   const active = useMemo(() => agents.find(a => a.id === activeId)!, [activeId])
+  const modelReadiness = getModelReadiness()
 
   useEffect(() => () => {
     timers.current.forEach(window.clearTimeout)
@@ -320,7 +322,7 @@ function App() {
             </div>
             <div className="metric-grid"><div><span>87%</span><small>人格一致性</small></div><div><span>0</span><small>安全越界</small></div><div><span>4.2</span><small>平均对话轮次</small></div><div><span>68%</span><small>话题接受率</small></div></div>
             <div className="motion-lab">
-              <header><div><small>MOTION LAB</small><b>{motionState.toUpperCase()} · {active.name}</b></div><span>GLB READY</span></header>
+              <header><div><small>MOTION LAB</small><b>{motionState.toUpperCase()} · {active.name}</b></div><span>{modelReadiness.ready}/{modelReadiness.total} GLB · {modelReadiness.fallback ? 'FALLBACK' : 'LIVE'}</span></header>
               {(['energy', 'valence', 'certainty'] as const).map(signal => <label key={signal}>
                 <span>{signal}</span><b>{Math.round(semantic[signal] * 100)}</b>
                 <input aria-label={signal} type="range" min="0" max="100" value={semantic[signal] * 100} onChange={event => setSemantic(current => ({ ...current, [signal]: Number(event.target.value) / 100 }))} />
