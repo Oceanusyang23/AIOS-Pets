@@ -6,6 +6,7 @@ import {
   ShieldCheck, SlidersHorizontal, Sparkles, Users, Volume2, X,
 } from 'lucide-react'
 import { PetStage, type MotionState } from './webgl/PetStage'
+import { SpriteStage } from './webgl/SpriteStage'
 import { deriveSemanticMotion, makeMotionTrace, type MotionSource, type MotionTrace } from './webgl/motion-engine'
 import { getModelReadiness } from './webgl/model-registry'
 import './App.css'
@@ -104,6 +105,7 @@ function App() {
   const [panel, setPanel] = useState<'chat' | 'harness' | 'topics'>('chat')
   const [syncing, setSyncing] = useState(false)
   const [motionState, setMotionState] = useState<MotionState>('idle')
+  const [visualMode, setVisualMode] = useState<'sprite' | 'rig'>('sprite')
   const [semantic, setSemantic] = useState({ energy: .55, valence: .64, certainty: .8 })
   const [motionTraces, setMotionTraces] = useState<MotionTrace[]>([])
   const [playing, setPlaying] = useState(true)
@@ -220,6 +222,12 @@ function App() {
     })
   }
 
+  const handleHandshake = (id: AgentId) => {
+    setActiveId(id)
+    transitionMotion('handshake', 1900, 'idle', 'gesture', id)
+    flash(`${agents.find(agent => agent.id === id)?.name} 握住了你的手`)
+  }
+
   return (
     <main className="cockpit-shell">
       <div className="ambient ambient-one" /><div className="ambient ambient-two" />
@@ -248,23 +256,27 @@ function App() {
         <section className="stage">
           <div className="stage-heading">
             <div><span className="eyebrow"><i /> LIVE COMPANIONS</span><h1>晚上好，Frank</h1><p>{active.intro}</p></div>
-            <button className="sync-button" onClick={runDailySync}><Users size={17} />{syncing ? '圆桌进行中…' : '开启今日圆桌'}<ChevronRight size={16} /></button>
+            <div className="stage-actions"><button className="mode-button" onClick={() => setVisualMode(mode => mode === 'sprite' ? 'rig' : 'sprite')}><Sparkles size={15}/>{visualMode === 'sprite' ? '2.5D 视觉' : '骨骼实验'}</button><button className="sync-button" onClick={runDailySync}><Users size={17} />{syncing ? '圆桌进行中…' : '开启今日圆桌'}<ChevronRight size={16} /></button></div>
           </div>
 
-          <PetStage
+          {visualMode === 'sprite' ? <SpriteStage
+            agents={agents}
+            activeId={activeId}
+            state={motionState}
+            syncing={syncing}
+            onSelect={selectAgent}
+            onHandshake={handleHandshake}
+            onStatePreview={(state) => transitionMotion(state, state === 'idle' ? undefined : 2300, 'idle', 'motion-lab')}
+          /> : <PetStage
             agents={agents}
             activeId={activeId}
             state={motionState}
             syncing={syncing}
             semantic={semantic}
             onSelect={selectAgent}
-            onHandshake={(id) => {
-              setActiveId(id)
-              transitionMotion('handshake', 1900, 'idle', 'gesture', id)
-              flash(`${agents.find(agent => agent.id === id)?.name} 握住了你的手`)
-            }}
+            onHandshake={handleHandshake}
             onStatePreview={(state) => transitionMotion(state, state === 'idle' ? undefined : 2300, 'idle', 'motion-lab')}
-          />
+          />}
 
           <div className={`voice-console ${listening ? 'listening' : ''}`}>
             <div className="voice-copy"><small>{listening ? 'LISTENING' : `正在与 ${active.name} 对话`}</small><b>{transcript || `“${active.name}，我想……”`}</b></div>
