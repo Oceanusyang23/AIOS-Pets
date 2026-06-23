@@ -64,16 +64,45 @@ type ProductionAvatar = {
   baseX: number
   phase: number
   rig?: ProductionRig
+  idleAction: IdleMicroAction | null
+  nextIdleActionAt: number
+  introStartedAt: number
 }
+
+type IdleMicroAction = {
+  kind: 'blink' | 'yawn' | 'scratch' | 'music'
+  startedAt: number
+  duration: number
+}
+
+type IntroPhase =
+  | { kind: 'run'; progress: number; time: number }
+  | { kind: 'wave'; progress: number; time: number }
+  | { kind: 'done' }
 
 type ProductionRigBone =
   | 'hips' | 'spine' | 'chest' | 'upperChest' | 'neck' | 'head' | 'jaw'
+  | 'leftEye' | 'rightEye'
   | 'leftShoulder' | 'leftUpperArm' | 'leftLowerArm' | 'leftHand'
   | 'rightShoulder' | 'rightUpperArm' | 'rightLowerArm' | 'rightHand'
+  | 'leftIndexProximal' | 'leftIndexIntermediate' | 'leftIndexDistal'
+  | 'rightIndexProximal' | 'rightIndexIntermediate' | 'rightIndexDistal'
+  | 'leftThumbProximal' | 'leftThumbIntermediate' | 'leftThumbDistal'
+  | 'rightThumbProximal' | 'rightThumbIntermediate' | 'rightThumbDistal'
+  | 'leftMiddleProximal' | 'leftMiddleIntermediate' | 'leftMiddleDistal'
+  | 'rightMiddleProximal' | 'rightMiddleIntermediate' | 'rightMiddleDistal'
 
 type ProductionRig = {
   bones: Partial<Record<ProductionRigBone, THREE.Object3D>>
   baseRotations: Map<THREE.Object3D, THREE.Euler>
+  report: {
+    requiredResolved: number
+    requiredTotal: number
+    optionalResolved: number
+    optionalTotal: number
+    missingRequired: string[]
+    semanticChannels: string[]
+  }
 }
 
 const stateLabels: Record<MotionState, string> = {
@@ -93,6 +122,12 @@ const roleBadgeMeta: Record<PetId, { symbol: string; title: string; x: string }>
   muse: { symbol: '▶', title: 'Music & Video Agent', x: '63.2%' },
   milo: { symbol: '♨', title: 'Food Service Agent', x: '86.5%' },
 }
+
+const INTRO_RUN_DURATION = 2.15
+const INTRO_WAVE_DURATION = 3
+
+const easeOutCubic = (value: number) => 1 - Math.pow(1 - THREE.MathUtils.clamp(value, 0, 1), 3)
+const easeInOutSine = (value: number) => -(Math.cos(Math.PI * THREE.MathUtils.clamp(value, 0, 1)) - 1) / 2
 
 const damp = (current: number, target: number, lambda: number, delta: number) =>
   THREE.MathUtils.damp(current, target, lambda, delta)
@@ -325,6 +360,8 @@ function bindProductionRig(root: THREE.Object3D): ProductionRig | undefined {
     neck: 'Neck',
     head: 'Head',
     jaw: 'Jaw',
+    leftEye: 'LeftEye',
+    rightEye: 'RightEye',
     leftShoulder: 'LeftShoulder',
     leftUpperArm: 'LeftUpperArm',
     leftLowerArm: 'LeftLowerArm',
@@ -333,6 +370,24 @@ function bindProductionRig(root: THREE.Object3D): ProductionRig | undefined {
     rightUpperArm: 'RightUpperArm',
     rightLowerArm: 'RightLowerArm',
     rightHand: 'RightHand',
+    leftIndexProximal: 'LeftIndexProximal',
+    leftIndexIntermediate: 'LeftIndexIntermediate',
+    leftIndexDistal: 'LeftIndexDistal',
+    rightIndexProximal: 'RightIndexProximal',
+    rightIndexIntermediate: 'RightIndexIntermediate',
+    rightIndexDistal: 'RightIndexDistal',
+    leftThumbProximal: 'LeftThumbProximal',
+    leftThumbIntermediate: 'LeftThumbIntermediate',
+    leftThumbDistal: 'LeftThumbDistal',
+    rightThumbProximal: 'RightThumbProximal',
+    rightThumbIntermediate: 'RightThumbIntermediate',
+    rightThumbDistal: 'RightThumbDistal',
+    leftMiddleProximal: 'LeftMiddleProximal',
+    leftMiddleIntermediate: 'LeftMiddleIntermediate',
+    leftMiddleDistal: 'LeftMiddleDistal',
+    rightMiddleProximal: 'RightMiddleProximal',
+    rightMiddleIntermediate: 'RightMiddleIntermediate',
+    rightMiddleDistal: 'RightMiddleDistal',
   }
   const bones: Partial<Record<ProductionRigBone, THREE.Object3D>> = {}
   const baseRotations = new Map<THREE.Object3D, THREE.Euler>()
@@ -342,7 +397,31 @@ function bindProductionRig(root: THREE.Object3D): ProductionRig | undefined {
     bones[contractName] = bone
     baseRotations.set(bone, bone.rotation.clone())
   }
-  return Object.keys(bones).length >= 6 ? { bones, baseRotations } : undefined
+  const required: ProductionRigBone[] = [
+    'hips', 'spine', 'chest', 'upperChest', 'neck', 'head', 'jaw',
+    'leftEye', 'rightEye',
+    'leftShoulder', 'leftUpperArm', 'leftLowerArm', 'leftHand',
+    'rightShoulder', 'rightUpperArm', 'rightLowerArm', 'rightHand',
+  ]
+  const optional = (Object.keys(boneMap) as ProductionRigBone[]).filter(name => !required.includes(name))
+  const missingRequired = required.filter(name => !bones[name])
+  const semanticChannels = [
+    bones.head && 'gaze.head',
+    bones.leftEye && bones.rightEye && 'gaze.eyes',
+    bones.jaw && 'expression.jaw',
+    bones.upperChest && 'posture.chest',
+    bones.leftUpperArm && bones.rightUpperArm && 'gesture.arms',
+    (bones.leftIndexProximal || bones.leftMiddleProximal || bones.leftThumbProximal || bones.rightIndexProximal || bones.rightMiddleProximal || bones.rightThumbProximal) && 'gesture.fingers',
+  ].filter(Boolean) as string[]
+  const report = {
+    requiredResolved: required.length - missingRequired.length,
+    requiredTotal: required.length,
+    optionalResolved: optional.filter(name => bones[name]).length,
+    optionalTotal: optional.length,
+    missingRequired,
+    semanticChannels,
+  }
+  return report.requiredResolved >= 12 ? { bones, baseRotations, report } : undefined
 }
 
 function stabilizeAvatarMaterials(root: THREE.Object3D, preservePbr = false) {
@@ -385,10 +464,60 @@ function dampBone(
   bone.rotation.z = damp(bone.rotation.z, base.z + (offset.z ?? 0), lambda, delta)
 }
 
-function prepareProductionAvatar(gltfScene: THREE.Group, fallback: Rig, agent: PetInfo): ProductionAvatar {
+function dampFingerCurl(
+  rig: ProductionRig | undefined,
+  side: 'left' | 'right',
+  finger: 'index' | 'middle' | 'thumb',
+  curl: number,
+  delta: number,
+  spread = 0,
+) {
+  const prefix = `${side}${finger[0].toUpperCase()}${finger.slice(1)}` as 'leftIndex' | 'rightIndex' | 'leftMiddle' | 'rightMiddle' | 'leftThumb' | 'rightThumb'
+  dampBone(rig, `${prefix}Proximal` as ProductionRigBone, delta, { x: curl, z: spread }, 11)
+  dampBone(rig, `${prefix}Intermediate` as ProductionRigBone, delta, { x: curl * .72 }, 11)
+  dampBone(rig, `${prefix}Distal` as ProductionRigBone, delta, { x: curl * .48 }, 11)
+}
+
+function driveSemanticFingers(rig: ProductionRig | undefined, delta: number, curl: number, openness: number) {
+  dampFingerCurl(rig, 'left', 'index', curl * .72, delta, -openness * .025)
+  dampFingerCurl(rig, 'left', 'middle', curl, delta)
+  dampFingerCurl(rig, 'left', 'thumb', curl * .52, delta, openness * .03)
+  dampFingerCurl(rig, 'right', 'index', curl * .72, delta, openness * .025)
+  dampFingerCurl(rig, 'right', 'middle', curl, delta)
+  dampFingerCurl(rig, 'right', 'thumb', curl * .52, delta, -openness * .03)
+}
+
+function pickIdleAction(id: PetId): IdleMicroAction['kind'] {
+  const roll = Math.random()
+  if (id === 'muse' && roll < .42) return 'music'
+  if (roll < .34) return 'blink'
+  if (roll < .56) return 'scratch'
+  if (roll < .75) return 'yawn'
+  return 'music'
+}
+
+function idleActionDuration(kind: IdleMicroAction['kind']) {
+  if (kind === 'blink') return .55
+  if (kind === 'yawn') return 2.35
+  if (kind === 'scratch') return 2.15
+  return 2.8
+}
+
+function updateIdleAction(avatar: ProductionAvatar, elapsed: number) {
+  if (avatar.idleAction && elapsed - avatar.idleAction.startedAt > avatar.idleAction.duration) {
+    avatar.idleAction = null
+    avatar.nextIdleActionAt = elapsed + 2.4 + Math.random() * 5.6
+  }
+  if (!avatar.idleAction && elapsed > avatar.nextIdleActionAt) {
+    const kind = pickIdleAction(avatar.id)
+    avatar.idleAction = { kind, startedAt: elapsed, duration: idleActionDuration(kind) }
+  }
+}
+
+function prepareProductionAvatar(gltfScene: THREE.Group, fallback: Rig, agent: PetInfo, introStartedAt: number): ProductionAvatar {
   const wrapper = new THREE.Group()
   wrapper.name = `production_${agent.id}_wrapper`
-  wrapper.position.set(fallback.baseX + (agent.id === 'atlas' ? -.08 : 0), GROUND_Y, 0)
+  wrapper.position.set(fallback.baseX + (agent.id === 'atlas' ? -.08 : 0), GROUND_Y, -6.2)
   wrapper.userData.agentId = agent.id
 
   if (shouldKeepLeftClusterOnly(gltfScene)) keepLeftClusterOnly(gltfScene)
@@ -411,8 +540,12 @@ function prepareProductionAvatar(gltfScene: THREE.Group, fallback: Rig, agent: P
       object.receiveShadow = true
     }
   })
-  stabilizeAvatarMaterials(gltfScene, agent.id !== 'atlas')
+  stabilizeAvatarMaterials(gltfScene, true)
   const rig = bindProductionRig(gltfScene)
+  if (rig) {
+    wrapper.userData.rigReport = rig.report
+    gltfScene.userData.rigReport = rig.report
+  }
 
   const halo = mesh(
     new THREE.RingGeometry(1.02, 1.08, 64),
@@ -432,7 +565,18 @@ function prepareProductionAvatar(gltfScene: THREE.Group, fallback: Rig, agent: P
   tag(handHit, agent.id, 'hand')
   wrapper.add(handHit)
 
-  return { id: agent.id, root: wrapper, model: gltfScene, halo, baseX: fallback.baseX, phase: fallback.phase, rig }
+  return {
+    id: agent.id,
+    root: wrapper,
+    model: gltfScene,
+    halo,
+    baseX: fallback.baseX,
+    phase: fallback.phase,
+    rig,
+    idleAction: null,
+    nextIdleActionAt: introStartedAt + INTRO_RUN_DURATION + INTRO_WAVE_DURATION + 1.4 + Math.random() * 3.8,
+    introStartedAt,
+  }
 }
 
 function animateProductionAvatar(
@@ -442,10 +586,13 @@ function animateProductionAvatar(
   delta: number,
   semantic: SemanticMotion,
   lookTargetX: number,
+  intro: IntroPhase,
+  idleAction: IdleMicroAction | null,
 ) {
   const t = elapsed * .8 + avatar.phase
   const breath = Math.sin(t * 1.35) * .025
   let rootY = GROUND_Y + breath
+  let rootZ = 0
   let rootRotX = 0
   let rootRotY = lookTargetX * .18 + Math.sin(t * .38) * .018
   const rootRotZ = Math.sin(t * .44) * .014
@@ -459,13 +606,58 @@ function animateProductionAvatar(
   let chestX = Math.sin(t * 1.1) * .012
   let chestZ = Math.sin(t * .52) * .01
   let jawX = 0
-  let leftArmZ = 0
+  let leftArmZ = -1.05
   const leftArmX = 0
-  let rightArmZ = 0
+  let rightArmZ = 1.05
   let rightArmX = 0
-  const leftLowerArmZ = 0
+  let leftLowerArmZ = 0
   let rightLowerArmZ = 0
   let rightHandX = 0
+  let eyeY = headY * .18
+  let eyeX = 0
+  let fingerCurl = .04
+  let fingerOpen = .2
+
+  if (state === 'idle' && idleAction) {
+    const localTime = elapsed - idleAction.startedAt
+    const p = easeInOutSine(localTime / idleAction.duration)
+    const pulse = Math.sin(p * Math.PI)
+    if (idleAction.kind === 'blink') {
+      headX += .018 * pulse
+      eyeX = -.11 * pulse
+      eyeY += .025 * pulse
+    }
+    if (idleAction.kind === 'yawn') {
+      headX += -.11 * pulse
+      chestX += .035 * pulse
+      jawX += .16 * pulse
+      rightArmX += -.08 * pulse
+      rightArmZ = THREE.MathUtils.lerp(rightArmZ, .42, pulse)
+      rightLowerArmZ += -.1 * pulse
+      fingerCurl += .16 * pulse
+      eyeX += -.055 * pulse
+    }
+    if (idleAction.kind === 'scratch') {
+      headY += -.07 * pulse
+      headZ += .035 * pulse
+      rightArmX += -.16 * pulse
+      rightArmZ = THREE.MathUtils.lerp(rightArmZ, -.46 + Math.sin(localTime * 12) * .045, pulse)
+      rightLowerArmZ += -.46 * pulse
+      rightHandX += Math.sin(localTime * 15) * .035 * pulse
+      fingerCurl += .12 * pulse
+    }
+    if (idleAction.kind === 'music') {
+      const groove = Math.sin(localTime * 5.2)
+      headY += groove * .05 * pulse
+      headZ += groove * .06 * pulse
+      chestZ += groove * .035 * pulse
+      leftArmZ += groove * .05 * pulse
+      rightArmZ += groove * .05 * pulse
+      jawX += .025 * pulse
+      eyeX += -.035 * pulse
+      fingerOpen += .18 * pulse
+    }
+  }
 
   if (state === 'wake') {
     const pulse = Math.sin(elapsed * 9)
@@ -476,8 +668,11 @@ function animateProductionAvatar(
     haloOpacity = .5
     headX = -.05
     headZ = pulse * .026
-    leftArmZ = -.09
-    rightArmZ = .09
+    leftArmZ = -.88
+    rightArmZ = .88
+    eyeX = -.025
+    fingerCurl = .08
+    fingerOpen = .45
   }
   if (state === 'listen') {
     rootRotX = .04
@@ -487,8 +682,12 @@ function animateProductionAvatar(
     headX = -.12
     headY = -.08 + lookTargetX * .18
     chestX = .045
-    leftArmZ = -.08
-    rightArmZ = .08
+    leftArmZ = -.94
+    rightArmZ = .94
+    eyeX = -.035
+    eyeY = -.04 + lookTargetX * .1
+    fingerCurl = .02
+    fingerOpen = .55
   }
   if (state === 'think') {
     rootRotY += .22 + Math.sin(t * .7) * .06
@@ -499,8 +698,12 @@ function animateProductionAvatar(
     headY = .16 + Math.sin(t * .7) * .03
     chestZ = -.035
     rightArmX = -.08
-    rightArmZ = .12
+    rightArmZ = .48
     rightLowerArmZ = .1
+    eyeX = -.055
+    eyeY = .06
+    fingerCurl = .12
+    fingerOpen = .12
   }
   if (state === 'speak') {
     const beat = Math.sin(elapsed * (4.8 + semantic.energy * 3.4) + avatar.phase)
@@ -514,9 +717,13 @@ function animateProductionAvatar(
     headZ = beat * .025
     chestZ = beat * .022
     jawX = .018 + Math.abs(beat) * .045
-    rightArmZ = .08 + beat * .045
+    rightArmZ = .72 + beat * .08
     rightLowerArmZ = .035 + beat * .035
-    leftArmZ = -.08 - Math.sin(elapsed * 3.2) * .04 * semantic.valence
+    leftArmZ = -.82 - Math.sin(elapsed * 3.2) * .04 * semantic.valence
+    eyeX = beat * .012
+    eyeY = lookTargetX * .08 + beat * .01
+    fingerCurl = .08 + Math.abs(beat) * .08 * semantic.energy
+    fingerOpen = .32 + semantic.valence * .18
   }
   if (state === 'social') {
     rootRotY += lookTargetX * .55
@@ -524,8 +731,11 @@ function animateProductionAvatar(
     haloOpacity = .2
     headY = lookTargetX * .48
     chestZ = -lookTargetX * .045
-    leftArmZ = -.06
-    rightArmZ = .06
+    leftArmZ = -.9
+    rightArmZ = .9
+    eyeY = lookTargetX * .12
+    fingerCurl = .05
+    fingerOpen = .28
   }
   if (state === 'handshake') {
     const shake = Math.sin(elapsed * 12) * .04
@@ -540,9 +750,45 @@ function animateProductionAvatar(
     rightArmZ = -.18 + shake * .7
     rightLowerArmZ = -.1 + shake * .55
     rightHandX = shake * .5
+    eyeX = -.02
+    eyeY = -.03
+    fingerCurl = .18 + Math.abs(shake) * .45
+    fingerOpen = .08
+  }
+
+  if (intro.kind === 'run') {
+    const p = easeOutCubic(intro.progress)
+    const stride = Math.sin(intro.time * 18 + avatar.phase)
+    rootZ = -6.2 * (1 - p)
+    rootY += Math.abs(stride) * .075 * (1 - intro.progress * .35)
+    rootRotX += .08 * (1 - p)
+    rootRotY += Math.sin(intro.time * 4 + avatar.phase) * .08 * (1 - p)
+    modelRotZ += stride * .035
+    leftArmZ += stride * .16
+    rightArmZ += -stride * .16
+    leftLowerArmZ += -stride * .08
+    rightLowerArmZ += stride * .08
+    headX += -.04
+    haloOpacity = .18 + p * .2
+  }
+  if (intro.kind === 'wave') {
+    const wave = Math.sin(intro.time * 9 + avatar.phase) * Math.sin(Math.PI * intro.progress)
+    rootZ = 0
+    rootY += Math.max(0, Math.sin(intro.time * 4 + avatar.phase)) * .018
+    headY += lookTargetX * .12
+    headZ += wave * .025
+    rightArmX += -.2
+    rightArmZ = -.68 + wave * .22
+    rightLowerArmZ += -.16 + wave * .14
+    rightHandX += wave * .16
+    fingerCurl = .04
+    fingerOpen = .62
+    jawX += .035 * Math.sin(Math.PI * intro.progress)
+    haloOpacity = .34
   }
 
   avatar.root.position.y = damp(avatar.root.position.y, rootY, 8, delta)
+  avatar.root.position.z = damp(avatar.root.position.z, rootZ, intro.kind === 'run' ? 5 : 8, delta)
   avatar.root.rotation.x = damp(avatar.root.rotation.x, rootRotX, 8, delta)
   avatar.root.rotation.y = damp(avatar.root.rotation.y, rootRotY, 8, delta)
   avatar.root.rotation.z = damp(avatar.root.rotation.z, rootRotZ, 8, delta)
@@ -552,6 +798,8 @@ function animateProductionAvatar(
   avatar.root.scale.setScalar(nextScale)
   dampBone(avatar.rig, 'head', delta, { x: headX, y: headY, z: headZ }, 10)
   dampBone(avatar.rig, 'neck', delta, { x: headX * .28, y: headY * .32, z: headZ * .28 }, 9)
+  dampBone(avatar.rig, 'leftEye', delta, { x: eyeX, y: eyeY }, 14)
+  dampBone(avatar.rig, 'rightEye', delta, { x: eyeX, y: eyeY }, 14)
   dampBone(avatar.rig, 'upperChest', delta, { x: chestX, z: chestZ }, 8)
   dampBone(avatar.rig, 'chest', delta, { x: chestX * .52, z: chestZ * .52 }, 8)
   dampBone(avatar.rig, 'jaw', delta, { x: jawX }, 14)
@@ -560,6 +808,7 @@ function animateProductionAvatar(
   dampBone(avatar.rig, 'leftLowerArm', delta, { z: leftLowerArmZ }, 9)
   dampBone(avatar.rig, 'rightLowerArm', delta, { z: rightLowerArmZ }, 9)
   dampBone(avatar.rig, 'rightHand', delta, { x: rightHandX }, 10)
+  driveSemanticFingers(avatar.rig, delta, fingerCurl, fingerOpen)
   const haloMat = avatar.halo.material as THREE.MeshBasicMaterial
   haloMat.opacity = damp(haloMat.opacity, haloOpacity, 7, delta)
 }
@@ -731,6 +980,7 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
     rigs.forEach(rig => scene.add(rig.root))
     const productionAvatars: ProductionAvatar[] = []
     let disposed = false
+    const clock = new THREE.Clock()
     const loader = new GLTFLoader()
     agents.forEach(agent => {
       const fallback = rigs.find(rig => rig.id === agent.id)
@@ -740,7 +990,7 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
         entry.glbUrl,
         gltf => {
           if (disposed) return
-          const avatar = prepareProductionAvatar(gltf.scene, fallback, agent)
+          const avatar = prepareProductionAvatar(gltf.scene, fallback, agent, clock.elapsedTime)
           fallback.root.visible = false
           productionAvatars.push(avatar)
           scene.add(avatar.root)
@@ -802,7 +1052,6 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
     }
     const observer = new ResizeObserver(resize)
     observer.observe(mount); resize()
-    const clock = new THREE.Clock()
     let animationId = 0
     const animate = () => {
       animationId = requestAnimationFrame(animate)
@@ -823,7 +1072,30 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
         if (current.syncing) avatarState = avatar.id === current.activeId ? 'speak' : 'social'
         else if (avatar.id === current.activeId) avatarState = current.state
         const targetDelta = activeRig ? THREE.MathUtils.clamp((activeRig.baseX - avatar.baseX) * .11, -.42, .42) : 0
-        animateProductionAvatar(avatar, avatarState, elapsed, delta, current.semantic, targetDelta)
+        let intro: IntroPhase = { kind: 'done' }
+        const introElapsed = Math.max(0, elapsed - avatar.introStartedAt)
+        if (introElapsed < INTRO_RUN_DURATION) {
+          intro = { kind: 'run', progress: introElapsed / INTRO_RUN_DURATION, time: introElapsed }
+        } else if (introElapsed < INTRO_RUN_DURATION + INTRO_WAVE_DURATION) {
+          const waveTime = introElapsed - INTRO_RUN_DURATION
+          intro = { kind: 'wave', progress: waveTime / INTRO_WAVE_DURATION, time: waveTime }
+        }
+        if (intro.kind === 'done' && avatarState === 'idle' && !current.syncing) {
+          updateIdleAction(avatar, elapsed)
+        } else if (avatar.idleAction) {
+          avatar.idleAction = null
+          avatar.nextIdleActionAt = elapsed + 2.4 + Math.random() * 4
+        }
+        animateProductionAvatar(
+          avatar,
+          avatarState,
+          elapsed,
+          delta,
+          current.semantic,
+          targetDelta,
+          intro,
+          intro.kind === 'done' && avatarState === 'idle' ? avatar.idleAction : null,
+        )
       })
       camera.position.x = damp(camera.position.x, activeRig ? activeRig.baseX * .045 : 0, 2.5, delta)
       camera.lookAt(camera.position.x * .18, .54, 0)
@@ -863,7 +1135,7 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
           <i /><b>{agent.name}</b><span>{agent.role}</span>
         </button>)}
       </div>
-      <div className="motion-monitor"><span className="monitor-dot" /><b>{stateLabels[state]}</b><small>{hasProductionModel('atlas') ? '4 AGENT GLB · ATLAS RIG LIVE' : 'PROCEDURAL RIG · GLB READY'}</small></div>
+      <div className="motion-monitor"><span className="monitor-dot" /><b>{stateLabels[state]}</b><small>{hasProductionModel('atlas') ? '4 RIGGED AGENTS · SEMANTIC BONES' : 'PROCEDURAL RIG · GLB READY'}</small></div>
       <div className="gesture-hint" data-visible={Boolean(hoveredHand)}><span>↕</span> 上下晃动或轻点手部 · 握手</div>
       <div className="motion-debug" aria-label="动作状态预览">
         {(Object.keys(stateLabels) as MotionState[]).map(key => <button key={key} className={state === key ? 'active' : ''} onClick={() => onStatePreview(key)}>{stateLabels[key]}</button>)}
