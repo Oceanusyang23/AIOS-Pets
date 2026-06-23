@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Activity, Bell, CarFront, ChevronRight, CircleGauge, Clock3,
+  Activity, ChevronLeft, ChevronRight, CircleGauge, Clock3,
   Coffee, Compass, Gauge, Home, Map, MessageCircleMore, Mic,
-  Music2, Navigation, Pause, Play, Radio, Search, Settings2,
-  ShieldCheck, SlidersHorizontal, Sparkles, Users, Volume2, X,
+  Navigation, Pause, Play, Radio,
+  ShieldCheck, Sparkles, Users, X,
   UploadCloud, CheckCircle2, AlertTriangle,
 } from 'lucide-react'
 import { PetStage, type MotionState } from './webgl/PetStage'
@@ -115,8 +115,10 @@ function App() {
   const [modelFileName, setModelFileName] = useState('')
   const [playing, setPlaying] = useState(true)
   const [toast, setToast] = useState('')
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const timers = useRef<number[]>([])
   const motionTimer = useRef<number | null>(null)
+  const drawerDrag = useRef<{ x: number; opened: boolean } | null>(null)
   const active = useMemo(() => agents.find(a => a.id === activeId)!, [activeId])
   const modelReadiness = getModelReadiness()
 
@@ -212,7 +214,7 @@ function App() {
 
   const runDailySync = () => {
     if (syncing) return
-    setPanel('chat'); setSyncing(true); transitionMotion('social', undefined, 'idle', 'agent-room'); setMessages([])
+    setPanel('chat'); setDrawerOpen(true); setSyncing(true); transitionMotion('social', undefined, 'idle', 'agent-room'); setMessages([])
     syncMessages.forEach((message, index) => {
       const timer = window.setTimeout(() => {
         setActiveId(message.agent)
@@ -246,35 +248,38 @@ function App() {
     }
   }
 
+  const beginDrawerGesture = (event: React.PointerEvent<HTMLButtonElement>) => {
+    drawerDrag.current = { x: event.clientX, opened: drawerOpen }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const moveDrawerGesture = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = drawerDrag.current
+    if (!drag) return
+    const delta = event.clientX - drag.x
+    if (!drag.opened && delta < -26) {
+      setDrawerOpen(true)
+      drawerDrag.current = null
+    }
+    if (drag.opened && delta > 26) {
+      setDrawerOpen(false)
+      drawerDrag.current = null
+    }
+  }
+
+  const endDrawerGesture = () => {
+    drawerDrag.current = null
+  }
+
   return (
     <main className="cockpit-shell">
       <div className="ambient ambient-one" /><div className="ambient ambient-two" />
-      <header className="topbar">
-        <div className="brand"><span className="brand-mark"><Sparkles size={17} /></span><div><b>AI Center</b><span>四位伙伴，与你共同生活</span></div></div>
-        <div className="drive-state"><ShieldCheck size={15} /><span>P 档 · 已安全驻车</span><i /></div>
-        <div className="top-actions">
-          <button aria-label="搜索"><Search size={18} /></button>
-          <button aria-label="通知" className="notification"><Bell size={18} /><i /></button>
-          <span className="weather">20:26 <small>23° 上海</small></span>
-          <button aria-label="设置"><Settings2 size={18} /></button>
-        </div>
-      </header>
 
       <section className="content-grid">
-        <aside className="left-rail">
-          <nav>
-            <button className="active" aria-label="主页"><Home size={20} /></button>
-            <button aria-label="导航"><Navigation size={20} /></button>
-            <button aria-label="音乐"><Music2 size={20} /></button>
-            <button aria-label="车辆"><CarFront size={20} /></button>
-          </nav>
-          <div className="rail-bottom"><span>20.5°</span><button><SlidersHorizontal size={19} /></button></div>
-        </aside>
-
         <section className="stage">
           <div className="stage-heading">
             <div><span className="eyebrow"><i /> LIVE COMPANIONS</span><h1>晚上好，Frank</h1><p>{active.intro}</p></div>
-            <div className="stage-actions"><button className="mode-button" onClick={() => setVisualMode(mode => mode === 'sprite' ? 'rig' : 'sprite')}><Sparkles size={15}/>{visualMode === 'sprite' ? '2.5D 视觉' : '骨骼实验'}</button><button className="sync-button" onClick={runDailySync}><Users size={17} />{syncing ? '圆桌进行中…' : '开启今日圆桌'}<ChevronRight size={16} /></button></div>
+            <div className="stage-actions"><button className="mode-button" onClick={() => setVisualMode(mode => mode === 'sprite' ? 'rig' : 'sprite')}><Sparkles size={15}/>{visualMode === 'sprite' ? '2.5D' : 'Rig'}</button><button className="sync-button" onClick={runDailySync}><Users size={17} />{syncing ? '圆桌进行中…' : '今日圆桌'}<ChevronRight size={16} /></button></div>
           </div>
 
           {visualMode === 'sprite' ? <SpriteStage
@@ -304,7 +309,21 @@ function App() {
           <div className="quick-prompts">{quickPrompts.map(prompt => <button key={prompt} onClick={() => submitVoice(prompt)}>{prompt}</button>)}</div>
         </section>
 
-        <aside className="right-panel">
+        {drawerOpen && <button className="drawer-scrim" aria-label="关闭圆桌浮层" onClick={() => setDrawerOpen(false)} />}
+        <button
+          className={`drawer-edge ${drawerOpen ? 'open' : ''}`}
+          aria-label={drawerOpen ? '收起圆桌列表' : '从右侧滑出圆桌列表'}
+          onClick={() => setDrawerOpen(open => !open)}
+          onPointerDown={beginDrawerGesture}
+          onPointerMove={moveDrawerGesture}
+          onPointerUp={endDrawerGesture}
+          onPointerCancel={endDrawerGesture}
+        >
+          {drawerOpen ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+          <span>{drawerOpen ? '收起' : '圆桌'}</span>
+        </button>
+
+        <aside className={`right-panel chat-drawer ${drawerOpen ? 'open' : ''}`} aria-hidden={!drawerOpen}>
           <div className="panel-tabs">
             <button className={panel === 'chat' ? 'active' : ''} onClick={() => setPanel('chat')}><MessageCircleMore size={16} />圆桌</button>
             <button className={panel === 'topics' ? 'active' : ''} onClick={() => setPanel('topics')}><Radio size={16} />热点</button>
@@ -312,7 +331,7 @@ function App() {
           </div>
 
           {panel === 'chat' && <div className="chat-panel">
-            <div className="panel-title"><div><small>AGENT ROOM · TODAY</small><h2>他们聊了些什么</h2></div><button onClick={() => setMessages([])}><X size={16} /></button></div>
+            <div className="panel-title"><div><small>AGENT ROOM · TODAY</small><h2>他们聊了些什么</h2></div><button onClick={() => setDrawerOpen(false)}><X size={16} /></button></div>
             <div className="chat-feed">
               {messages.length === 0 && !syncing && <div className="empty-chat"><Coffee size={28} /><b>圆桌暂时安静</b><span>让四位伙伴带着今天的新发现回来聊聊。</span><button onClick={runDailySync}>开始一次圆桌</button></div>}
               {messages.map((message, index) => {
@@ -374,9 +393,23 @@ function App() {
       </section>
 
       <footer className="dock">
-        <div className="music-widget"><button onClick={() => setPlaying(!playing)}>{playing ? <Pause size={15}/> : <Play size={15}/>}</button><div className="album-art">月</div><div><b>Moonlit Walk</b><span>Mondo Loops · 缪思推荐</span></div><Volume2 size={15}/></div>
-        <nav><button className="active"><Home size={19}/><span>桌面</span></button><button><Map size={19}/><span>地图</span></button><button><Music2 size={19}/><span>音乐</span></button><button onClick={() => setPanel('chat')}><Users size={19}/><span>伙伴</span></button><button><Gauge size={19}/><span>车辆</span></button></nav>
-        <div className="trip-widget"><Navigation size={17}/><div><small>回家</small><b>32 分钟 · 18 km</b></div><ChevronRight size={17}/></div>
+        <div className="dock-cluster dock-left">
+          <button className="dock-icon active"><Home size={22}/></button>
+          <button className="dock-icon"><Users size={21}/></button>
+          <span className="dock-temp">20.5</span>
+        </div>
+        <nav>
+          <button className="active"><Navigation size={20}/><span>导航</span></button>
+          <button><Map size={20}/><span>地图</span></button>
+          <button onClick={() => setPanel('topics')}><Sparkles size={20}/><span>AI</span></button>
+          <button onClick={() => { setPlaying(!playing); submitVoice('换一首适合夜路的歌') }}>{playing ? <Pause size={20}/> : <Play size={20}/>}<span>媒体</span></button>
+          <button onClick={() => { setPanel('chat'); setDrawerOpen(true) }}><Users size={20}/><span>伙伴</span></button>
+        </nav>
+        <div className="dock-cluster dock-right">
+          <span className="dock-temp">20.5</span>
+          <button className="dock-icon"><Gauge size={22}/></button>
+          <button className="dock-icon"><Coffee size={21}/></button>
+        </div>
       </footer>
       {toast && <div className="toast"><Sparkles size={16}/>{toast}</div>}
     </main>

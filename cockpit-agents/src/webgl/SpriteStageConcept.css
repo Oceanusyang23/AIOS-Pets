@@ -1,0 +1,61 @@
+.sprite-stage {
+  background: #eaf2ff;
+}
+
+.sprite-source {
+  object-position: center top;
+}
+
+.sprite-base {
+  display: block;
+  z-index: 1;
+}
+
+.sprite-character {
+  display: none;
+}
+
+.sprite-vignette {
+  z-index: 2;
+  background: linear-gradient(180deg, rgba(255,255,255,.04), transparent 74%, rgba(16,27,44,.12));
+}
+
+.sprite-status,
+.sprite-state-effect,
+.sprite-motion-debug {
+  display: none;
+}
+
+.sprite-select {
+  top: 16%;
+  bottom: 9%;
+  height: auto;
+  background: transparent;
+  border: 0;
+  backdrop-filter: none;
+  color: transparent;
+}
+
+.sprite-select i,
+.sprite-select b,
+.sprite-select span {
+  opacity: 0;
+}
+
+.sprite-select.active {
+  background: transparent;
+}
+
+.sprite-hand-hit:hover {
+  border-color: rgba(43, 160, 180, .45);
+  background: rgba(126, 232, 255, .13);
+}
+
+.sprite-gesture-hint {
+  top: 76px;
+  right: 28px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .7);
+  color: #314465;
+  box-shadow: 0 12px 32px rgba(57, 83, 122, .12);
+}

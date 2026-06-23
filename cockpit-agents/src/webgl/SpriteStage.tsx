@@ -3,6 +3,7 @@ import conceptImage from '../assets/pets-concept.png'
 import type { MotionState, PetId } from './PetStage'
 import './SpriteStage.css'
 import './SpriteStageMotion.css'
+import './SpriteStageConcept.css'
 
 type PetInfo = { id: PetId; name: string; role: string; color: string }
 type Props = {
