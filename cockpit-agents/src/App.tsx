@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  BatteryCharging, Bell, Bluetooth, Signal,
   Activity, ChevronLeft, ChevronRight, CircleGauge, Clock3,
   Coffee, Compass, Gauge, Home, Map, MessageCircleMore, Mic,
   Navigation, Pause, Play, Radio,
@@ -7,7 +8,6 @@ import {
   UploadCloud, CheckCircle2, AlertTriangle,
 } from 'lucide-react'
 import { PetStage, type MotionState } from './webgl/PetStage'
-import { SpriteStage } from './webgl/SpriteStage'
 import { deriveSemanticMotion, makeMotionTrace, type MotionSource, type MotionTrace } from './webgl/motion-engine'
 import { getModelReadiness } from './webgl/model-registry'
 import { petModelRegistry } from './webgl/model-registry'
@@ -17,15 +17,18 @@ import './App.css'
 type AgentId = 'atlas' | 'muse' | 'milo' | 'nova'
 type Message = { agent: AgentId; text: string; time?: string; kind?: 'topic' | 'chat' }
 
-type SpeechResult = { [index: number]: { transcript: string } }
-type SpeechEvent = { results: ArrayLike<SpeechResult> }
+type SpeechResult = { [index: number]: { transcript: string }; isFinal: boolean }
+type SpeechEvent = { resultIndex: number; results: ArrayLike<SpeechResult> }
 type SpeechRecognizer = {
   lang: string
+  continuous: boolean
   interimResults: boolean
   onresult: (event: SpeechEvent) => void
   onend: () => void
-  onerror: () => void
+  onerror: (event?: { error?: string }) => void
   start: () => void
+  stop: () => void
+  abort?: () => void
 }
 type SpeechRecognizerConstructor = new () => SpeechRecognizer
 
@@ -82,6 +85,13 @@ const syncMessages: Message[] = [
 
 const quickPrompts = ['回家，顺路找家安静的餐厅', '今天有什么值得聊的？', '换一首适合夜路的歌']
 
+const ttsProfiles: Record<AgentId, { rate: number; pitch: number; voiceSlot: number }> = {
+  atlas: { rate: .92, pitch: .88, voiceSlot: 0 },
+  nova: { rate: .98, pitch: .74, voiceSlot: 1 },
+  muse: { rate: .9, pitch: 1.22, voiceSlot: 2 },
+  milo: { rate: .86, pitch: 1.02, voiceSlot: 3 },
+}
+
 function AgentAvatar({ agent, active, speaking, small = false }: { agent: Agent; active?: boolean; speaking?: boolean; small?: boolean }) {
   return (
     <div className={`agent-avatar ${active ? 'active' : ''} ${speaking ? 'speaking' : ''} ${small ? 'small' : ''}`}
@@ -101,14 +111,15 @@ function AgentAvatar({ agent, active, speaking, small = false }: { agent: Agent;
 }
 
 function App() {
-  const [activeId, setActiveId] = useState<AgentId>('muse')
+  const [activeId, setActiveId] = useState<AgentId>('atlas')
   const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [listening, setListening] = useState(false)
   const [transcript, setTranscript] = useState('')
+  const [voiceMode, setVoiceMode] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle')
+  const [speakingAgent, setSpeakingAgent] = useState<AgentId | null>(null)
   const [panel, setPanel] = useState<'chat' | 'harness' | 'topics'>('chat')
   const [syncing, setSyncing] = useState(false)
   const [motionState, setMotionState] = useState<MotionState>('idle')
-  const [visualMode, setVisualMode] = useState<'sprite' | 'rig'>('sprite')
   const [semantic, setSemantic] = useState({ energy: .55, valence: .64, certainty: .8 })
   const [motionTraces, setMotionTraces] = useState<MotionTrace[]>([])
   const [modelReport, setModelReport] = useState<RigValidationReport | null>(null)
@@ -119,12 +130,20 @@ function App() {
   const timers = useRef<number[]>([])
   const motionTimer = useRef<number | null>(null)
   const drawerDrag = useRef<{ x: number; opened: boolean } | null>(null)
+  const recognitionRef = useRef<SpeechRecognizer | null>(null)
+  const voiceSessionRef = useRef(false)
+  const voiceRestartTimer = useRef<number | null>(null)
+  const voiceResponseTimer = useRef<number | null>(null)
   const active = useMemo(() => agents.find(a => a.id === activeId)!, [activeId])
   const modelReadiness = getModelReadiness()
 
   useEffect(() => () => {
     timers.current.forEach(window.clearTimeout)
     if (motionTimer.current) window.clearTimeout(motionTimer.current)
+    if (voiceRestartTimer.current) window.clearTimeout(voiceRestartTimer.current)
+    if (voiceResponseTimer.current) window.clearTimeout(voiceResponseTimer.current)
+    recognitionRef.current?.abort?.()
+    window.speechSynthesis?.cancel()
   }, [])
 
   const flash = (text: string) => {
@@ -157,7 +176,39 @@ function App() {
     transitionMotion('wake', 720, 'listen', 'touch', id)
   }
 
-  const answer = (text: string) => {
+  const speakAgent = (agentId: AgentId, text: string, interrupt = true) => {
+    const synth = window.speechSynthesis
+    if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
+      flash('当前浏览器不支持 TTS 发声')
+      return
+    }
+    if (interrupt) synth.cancel()
+    const profile = ttsProfiles[agentId]
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = 'zh-CN'
+    utterance.rate = profile.rate
+    utterance.pitch = profile.pitch
+    utterance.volume = .92
+    const voices = synth.getVoices()
+    const zhVoices = voices.filter(voice => /^zh|^cmn|Chinese|普通话|國語/i.test(`${voice.lang} ${voice.name}`))
+    const pool = zhVoices.length ? zhVoices : voices
+    if (pool.length) utterance.voice = pool[profile.voiceSlot % pool.length]
+    utterance.onstart = () => {
+      setSpeakingAgent(agentId)
+      setVoiceMode('speaking')
+    }
+    utterance.onend = () => {
+      setSpeakingAgent(current => current === agentId ? null : current)
+      if (voiceSessionRef.current) setVoiceMode('listening')
+      else setVoiceMode('idle')
+    }
+    utterance.onerror = () => {
+      setSpeakingAgent(current => current === agentId ? null : current)
+    }
+    synth.speak(utterance)
+  }
+
+  const answer = (text: string, keepSession = voiceSessionRef.current) => {
     const lower = text.toLowerCase()
     let target: AgentId = activeId
     let response = active.intro
@@ -175,41 +226,126 @@ function App() {
     const nextSemantic = deriveSemanticMotion(text)
     setSemantic(nextSemantic)
     setActiveId(target)
-    transitionMotion('speak', 2600, 'idle', 'voice', target, nextSemantic)
+    setVoiceMode('speaking')
+    transitionMotion('speak', 2600, keepSession ? 'listen' : 'idle', 'voice', target, nextSemantic)
     setMessages(prev => [...prev, { agent: target, text: response, time: '刚刚' }])
-    setTranscript('')
+    speakAgent(target, response)
+    const timer = window.setTimeout(() => {
+      if (voiceSessionRef.current) {
+        setVoiceMode('listening')
+        setTranscript('继续说，我在听。')
+      } else {
+        setVoiceMode('idle')
+        setTranscript('')
+      }
+    }, 2680)
+    timers.current.push(timer)
+  }
+
+  const queueVoiceTurn = (rawText: string) => {
+    const text = rawText.trim()
+    if (!text) return
+    window.speechSynthesis?.cancel()
+    setSpeakingAgent(null)
+    if (voiceResponseTimer.current) window.clearTimeout(voiceResponseTimer.current)
+    setTranscript(text)
+    setVoiceMode('thinking')
+    transitionMotion('think', undefined, 'idle', 'voice')
+    voiceResponseTimer.current = window.setTimeout(() => answer(text), 620)
   }
 
   const submitVoice = (prompt?: string) => {
-    const text = prompt || transcript || quickPrompts[0]
-    setTranscript(text)
-    setListening(false)
-    transitionMotion('think', undefined, 'idle', 'voice')
-    window.setTimeout(() => answer(text), 820)
+    queueVoiceTurn(prompt || transcript || quickPrompts[0])
   }
 
-  const toggleListening = () => {
-    if (listening) { submitVoice(); return }
+  const stopVoiceSession = () => {
+    voiceSessionRef.current = false
+    setListening(false)
+    setVoiceMode('idle')
+    if (voiceRestartTimer.current) window.clearTimeout(voiceRestartTimer.current)
+    recognitionRef.current?.stop()
+    recognitionRef.current = null
+    window.speechSynthesis?.cancel()
+    setSpeakingAgent(null)
+    transitionMotion('idle', undefined, 'idle', 'voice')
+    if (!transcript) setTranscript('')
+  }
+
+  const startVoiceSession = () => {
+    if (voiceSessionRef.current) return
+    voiceSessionRef.current = true
     setListening(true)
+    setVoiceMode('listening')
     transitionMotion('listen', undefined, 'idle', 'voice')
-    setTranscript('正在聆听…')
+    setTranscript('持续聆听中，你可以直接说“阿拓，带我回家”。')
     const speechWindow = window as Window & {
       SpeechRecognition?: SpeechRecognizerConstructor
       webkitSpeechRecognition?: SpeechRecognizerConstructor
     }
     const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition
-    if (Recognition) {
-      const recognition = new Recognition()
-      recognition.lang = 'zh-CN'
-      recognition.interimResults = true
-      recognition.onresult = (event: SpeechEvent) => {
-        const text = Array.from(event.results, result => result[0].transcript).join('')
-        setTranscript(text)
-      }
-      recognition.onend = () => { setListening(false); if (!transcript) setMotionState('idle') }
-      recognition.onerror = () => { setListening(false); setTranscript(''); flash('未获得麦克风输入，可点下方示例体验') }
-      recognition.start()
+    if (!Recognition) {
+      flash('当前浏览器不支持连续语音识别，可先用下方示例驱动阿拓')
+      return
     }
+
+    const recognition = new Recognition()
+    recognition.lang = 'zh-CN'
+    recognition.continuous = true
+    recognition.interimResults = true
+    recognition.onresult = (event: SpeechEvent) => {
+      let interim = ''
+      let finalText = ''
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index]
+        const text = result[0]?.transcript || ''
+        if (result.isFinal) finalText += text
+        else interim += text
+      }
+      if (finalText.trim()) queueVoiceTurn(finalText)
+      else if (interim.trim()) {
+        setVoiceMode('listening')
+        setTranscript(interim.trim())
+        transitionMotion('listen', undefined, 'idle', 'voice')
+      }
+    }
+    recognition.onend = () => {
+      recognitionRef.current = null
+      if (!voiceSessionRef.current) {
+        setListening(false)
+        return
+      }
+      voiceRestartTimer.current = window.setTimeout(() => {
+        if (!voiceSessionRef.current) return
+        recognitionRef.current = recognition
+        try {
+          recognition.start()
+        } catch {
+          flash('连续监听重启失败，请再点一次麦克风')
+          stopVoiceSession()
+        }
+      }, 240)
+    }
+    recognition.onerror = event => {
+      if (event?.error === 'not-allowed' || event?.error === 'service-not-allowed') {
+        flash('麦克风权限未打开，允许后再点麦克风')
+        stopVoiceSession()
+        return
+      }
+      if (!voiceSessionRef.current) return
+      setTranscript('我还在，刚才那句没听清。')
+    }
+    recognitionRef.current = recognition
+    try {
+      recognition.start()
+    } catch {
+      flash('语音识别启动失败，请检查浏览器麦克风权限')
+      stopVoiceSession()
+    }
+  }
+
+  const toggleListening = () => {
+    if (voiceSessionRef.current) stopVoiceSession()
+    else startVoiceSession()
   }
 
   const runDailySync = () => {
@@ -220,6 +356,7 @@ function App() {
         setActiveId(message.agent)
         transitionMotion('social', undefined, 'idle', 'agent-room', message.agent)
         setMessages(prev => [...prev, { ...message, time: '刚刚' }])
+        speakAgent(message.agent, message.text, index === 0)
         if (index === syncMessages.length - 1) {
           setSyncing(false)
           transitionMotion('speak', 1800, 'idle', 'agent-room', message.agent)
@@ -279,18 +416,14 @@ function App() {
         <section className="stage">
           <div className="stage-heading">
             <div><span className="eyebrow"><i /> LIVE COMPANIONS</span><h1>晚上好，Frank</h1><p>{active.intro}</p></div>
-            <div className="stage-actions"><button className="mode-button" onClick={() => setVisualMode(mode => mode === 'sprite' ? 'rig' : 'sprite')}><Sparkles size={15}/>{visualMode === 'sprite' ? '2.5D' : 'Rig'}</button><button className="sync-button" onClick={runDailySync}><Users size={17} />{syncing ? '圆桌进行中…' : '今日圆桌'}<ChevronRight size={16} /></button></div>
+            <div className="stage-actions"><button className="sync-button" onClick={runDailySync}><Users size={17} />{syncing ? '圆桌进行中…' : '今日圆桌'}<ChevronRight size={16} /></button></div>
+          </div>
+          <div className="assistant-mark" aria-hidden="true"><span>⌕</span><i /></div>
+          <div className="top-status" aria-label="车机状态">
+            <Bell size={28} /><BatteryCharging size={27} /><Bluetooth size={30} /><span>5G</span><Signal size={29} />
           </div>
 
-          {visualMode === 'sprite' ? <SpriteStage
-            agents={agents}
-            activeId={activeId}
-            state={motionState}
-            syncing={syncing}
-            onSelect={selectAgent}
-            onHandshake={handleHandshake}
-            onStatePreview={(state) => transitionMotion(state, state === 'idle' ? undefined : 2300, 'idle', 'motion-lab')}
-          /> : <PetStage
+          <PetStage
             agents={agents}
             activeId={activeId}
             state={motionState}
@@ -299,12 +432,12 @@ function App() {
             onSelect={selectAgent}
             onHandshake={handleHandshake}
             onStatePreview={(state) => transitionMotion(state, state === 'idle' ? undefined : 2300, 'idle', 'motion-lab')}
-          />}
+          />
 
           <div className={`voice-console ${listening ? 'listening' : ''}`}>
-            <div className="voice-copy"><small>{listening ? 'LISTENING' : `正在与 ${active.name} 对话`}</small><b>{transcript || `“${active.name}，我想……”`}</b></div>
+            <div className="voice-copy"><small>{speakingAgent ? `${agents.find(agent => agent.id === speakingAgent)?.name} 正在发声 · TTS` : listening ? `CONTINUOUS · ${voiceMode.toUpperCase()}` : `正在与 ${active.name} 对话`}</small><b>{transcript || `“${active.name}，我想……”`}</b></div>
             <div className="waveform">{[5,9,14,8,18,12,6,15,9,5,12,7].map((h, i) => <i key={i} style={{ height: h }} />)}</div>
-            <button className="mic-button" onClick={toggleListening} aria-label="语音交互">{listening ? <Pause size={22} /> : <Mic size={22} />}</button>
+            <button className="mic-button" onClick={toggleListening} aria-label={listening ? '结束连续语音' : '开始连续语音'}>{listening ? <Pause size={22} /> : <Mic size={22} />}</button>
           </div>
           <div className="quick-prompts">{quickPrompts.map(prompt => <button key={prompt} onClick={() => submitVoice(prompt)}>{prompt}</button>)}</div>
         </section>
