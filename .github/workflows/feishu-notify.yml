@@ -1,0 +1,97 @@
+name: Notify Feishu on Push
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    types: [opened, closed, merged]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Send notification to Feishu
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_CHAT_ID: oc_98ba0dac9941993769d2b8908dcce3a0
+        run: |
+          set -e
+
+          # Get tenant access token
+          TOKEN=$(curl -s -X POST "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal" \
+            -H "Content-Type: application/json" \
+            -d "{\"app_id\":\"$FEISHU_APP_ID\",\"app_secret\":\"$FEISHU_APP_SECRET\"}" | jq -r '.tenant_access_token')
+
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "Failed to get token"
+            exit 1
+          fi
+
+          # Build message based on event type
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ACTION="${{ github.event.action }}"
+            PR_TITLE=$(jq -r '.pull_request.title' < $GITHUB_EVENT_PATH)
+            PR_URL=$(jq -r '.pull_request.html_url' < $GITHUB_EVENT_PATH)
+            PR_AUTHOR=$(jq -r '.pull_request.user.login' < $GITHUB_EVENT_PATH)
+            PR_NUM=$(jq -r '.pull_request.number' < $GITHUB_EVENT_PATH)
+            PR_MERGED=$(jq -r '.pull_request.merged' < $GITHUB_EVENT_PATH)
+
+            if [ "$ACTION" = "opened" ]; then
+              ICON="📥"
+              TITLE="新 PR #$PR_NUM"
+            elif [ "$PR_MERGED" = "true" ]; then
+              ICON="✅"
+              TITLE="PR #$PR_NUM 已合并"
+            elif [ "$ACTION" = "closed" ]; then
+              ICON="❌"
+              TITLE="PR #$PR_NUM 已关闭"
+            else
+              ICON="🔄"
+              TITLE="PR #$PR_NUM 更新"
+            fi
+
+            MSG="$ICON $TITLE
+📦 仓库: ARIOS-Pets
+🔀 标题: $PR_TITLE
+👤 作者: @$PR_AUTHOR
+🔗 链接: $PR_URL"
+
+          else
+            # Push event
+            COMMIT_MSGS=$(git log --format='%s' -n 5 ${{ github.event.before }}..${{ github.event.after }} 2>/dev/null || echo "查看完整日志")
+            COMMIT_COUNT=$(echo "$COMMIT_MSGS" | wc -l | tr -d ' ')
+            BRANCH="${{ github.ref_name }}"
+            PUSHER="${{ github.actor }}"
+            COMPARE_URL="https://github.com/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.event.after }}"
+
+            # Format commits
+            FORMATTED=""
+            while IFS= read -r line; do
+              FORMATTED="${FORMATTED}• ${line}
+"
+            done <<< "$COMMIT_MSGS"
+
+            MSG="🚀 新提交推送
+📦 仓库: ARIOS-Pets
+🌿 分支: $BRANCH
+👤 推送者: @$PUSHER
+📝 提交 (${COMMIT_COUNT}):
+${FORMATTED}
+🔗 对比: ${COMPARE_URL}"
+          fi
+
+          # Send to Feishu
+          PAYLOAD=$(jq -n \
+            --arg chat_id "$FEISHU_CHAT_ID" \
+            --arg text "$MSG" \
+            '{receive_id: $chat_id, msg_type: "text", content: {text: $text}}')
+
+          curl -s -X POST "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
+
+          echo -e "\nNotification sent to Feishu"
