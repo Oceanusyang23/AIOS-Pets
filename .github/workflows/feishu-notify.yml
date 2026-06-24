@@ -46,6 +46,7 @@ jobs:
           import json
           import os
           import textwrap
+          import urllib.error
           import urllib.request
 
           DEFAULT_AIOS_PETS_CHAT_ID = "oc_5e5cd2c549b5e4325ffcb4e0cbb5fcd1"
@@ -146,9 +147,18 @@ jobs:
                   headers={"Content-Type": "application/json; charset=utf-8", **(headers or {})},
                   method="POST",
               )
-              with urllib.request.urlopen(request, timeout=12) as response:
-                  raw = response.read().decode("utf-8", errors="replace")
-                  return response.status, raw, json.loads(raw)
+              try:
+                  with urllib.request.urlopen(request, timeout=12) as response:
+                      raw = response.read().decode("utf-8", errors="replace")
+                      return response.status, raw, json.loads(raw)
+              except urllib.error.HTTPError as error:
+                  raw = error.read().decode("utf-8", errors="replace")
+                  print(f"Feishu API HTTP {error.code}: {raw}")
+                  try:
+                      parsed = json.loads(raw)
+                  except json.JSONDecodeError:
+                      parsed = {"code": error.code, "msg": raw}
+                  return error.code, raw, parsed
 
           _, _, token_response = post_json(
               "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
