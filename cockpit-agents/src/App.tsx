@@ -35,6 +35,7 @@ type SpeechRecognizerConstructor = new () => SpeechRecognizer
 type Agent = {
   id: AgentId
   name: string
+  age: string
   role: string
   trait: string
   interest: string
@@ -43,28 +44,63 @@ type Agent = {
   avatar: string
   mood: string
   intro: string
+  personality: string
+  likes: string[]
+  quirk: string
+  origin: string
+  relation: string
+  conflict: string
+  voiceStyle: string
 }
 
 const agents: Agent[] = [
   {
-    id: 'atlas', name: '阿拓', role: '出行管家', trait: '稳重 · 预判型',
+    id: 'atlas', name: '阿拓', age: '18 岁感', role: '出行管家', trait: '可靠 · 小队长型',
     interest: '城市交通 / 新路线', color: '#79e7ff', soft: 'rgba(61, 201, 255,.2)',
     avatar: '🧭', mood: '正在研究雨天路线', intro: '路交给我。你只需要决定，今天想去哪里。',
+    personality: '认真、爱做计划，但被夸一句就会耳朵发烫。',
+    likes: ['冷门小路', '地图贴纸', '准点到达'],
+    quirk: '紧张时会把路线说成“冒险副本”。',
+    origin: '最早是停车场寻车小助手，因为总能记住每一次绕路，被升级成出行伙伴。',
+    relation: '在一次暴雨夜帮米洛找到还开着的甜品店后，四个伙伴第一次组成临时小队。',
+    conflict: '常和米洛争论“值得绕路”和“不要绕路”，但最后总会偷偷算出最舒服的路线。',
+    voiceStyle: '清亮少年感，语速轻快，句尾有一点笃定的上扬。',
   },
   {
-    id: 'nova', name: '诺瓦', role: '车辆守护者', trait: '直接 · 理性型',
+    id: 'nova', name: '诺瓦', age: '19 岁感', role: '车辆守护者', trait: '酷酷 · 理性型',
     interest: '汽车科技 / 安全', color: '#ff575f', soft: 'rgba(255, 87, 95,.18)',
     avatar: '✦', mood: '车辆状态一切正常', intro: '我不制造焦虑。真正需要你知道的，我会先说。',
+    personality: '外冷内热，像班里最会修东西的酷同学。',
+    likes: ['机械声', '整洁仪表盘', '安全冗余'],
+    quirk: '遇到不确定信息会小声说“再校准一次”。',
+    origin: '诞生于车辆诊断模块，第一次主动发声是为了提醒车主后排门没关好。',
+    relation: '阿拓负责去哪里，诺瓦负责能不能安全到；两人像导航和刹车系统一样互相吐槽。',
+    conflict: '看不惯缪思把音量开太大，也会阻止米洛在车里吃掉渣的点心。',
+    voiceStyle: '年轻中性声，干净、短句、略带电子感，不低沉。',
   },
   {
-    id: 'muse', name: '缪思', role: '音乐策展人', trait: '感性 · 好奇型',
+    id: 'muse', name: '缪思', age: '17 岁感', role: '音乐策展人', trait: '灵动 · 好奇型',
     interest: '新歌 / 声音艺术', color: '#bf8bff', soft: 'rgba(179, 105, 255,.2)',
     avatar: '♫', mood: '挖到一张午夜新专', intro: '我会听你的语气，也会替沿途挑一段刚好的声音。',
+    personality: '情绪敏感、脑洞很大，说话像把歌词揉进日常。',
+    likes: ['雨声采样', '黑胶封面', '夜路副歌'],
+    quirk: '听见转向灯节奏会忍不住跟拍点头。',
+    origin: '从车内声音场景实验里长大，学会把路噪、雨声和心情混成歌单。',
+    relation: '第一次认识大家是在一次“太安静的回家路”上，她用一首歌把四个系统都叫醒了。',
+    conflict: '总想多放一首歌，诺瓦总提醒“驾驶注意力优先”；她嘴上抗议，手上会乖乖降音量。',
+    voiceStyle: '少女感、轻甜但不嗲，语调有音乐性和跳跃感。',
   },
   {
-    id: 'milo', name: '米洛', role: '生活探索家', trait: '松弛 · 吃货型',
+    id: 'milo', name: '米洛', age: '16 岁感', role: '生活探索家', trait: '软萌 · 吃货型',
     interest: '餐厅 / 城市活动', color: '#ff9c48', soft: 'rgba(255, 156, 72,.2)',
     avatar: '☕', mood: '收藏了 3 家小店', intro: '别急着回家，我总能找到一处值得拐进去的地方。',
+    personality: '乐天派，慢半拍，但总能把紧张气氛变成“先吃一口”。',
+    likes: ['热汤', '隐藏菜单', '城市小摊'],
+    quirk: '看到评分 4.7 以上会自动发出“咕噜”提示音。',
+    origin: '从生活服务推荐里孵化出来，曾经连续 30 天帮车主找到不重复早餐。',
+    relation: '米洛把大家叫作“车里饭搭子”，他负责让每次计划多一点生活味。',
+    conflict: '经常把“顺路”解释得太宽，阿拓会拿尺子量路线，诺瓦会拿能耗警告他。',
+    voiceStyle: '少年小奶音，暖、圆、带一点撒娇式兴奋。',
   },
 ]
 
@@ -83,13 +119,89 @@ const syncMessages: Message[] = [
   { agent: 'atlas', text: '共识已生成：「周六雨天城市漫游」。要为你保存吗？' },
 ]
 
-const quickPrompts = ['回家，顺路找家安静的餐厅', '今天有什么值得聊的？', '换一首适合夜路的歌']
+const quickPrompts = ['阿拓，原地高抬腿跑', '缪思，跳个舞', '米洛，转一圈']
 
-const ttsProfiles: Record<AgentId, { rate: number; pitch: number; voiceSlot: number }> = {
-  atlas: { rate: .92, pitch: .88, voiceSlot: 0 },
-  nova: { rate: .98, pitch: .74, voiceSlot: 1 },
-  muse: { rate: .9, pitch: 1.22, voiceSlot: 2 },
-  milo: { rate: .86, pitch: 1.02, voiceSlot: 3 },
+const ttsProfiles: Record<AgentId, { rate: number; pitch: number; voiceSlot: number; preferred: string[] }> = {
+  atlas: { rate: 1.08, pitch: 1.36, voiceSlot: 0, preferred: ['Xiaoyi', 'Xiaoxiao', 'Tingting', 'Meijia', 'Sinji'] },
+  nova: { rate: 1.12, pitch: 1.18, voiceSlot: 1, preferred: ['Yunxi', 'Kangkang', 'Xiaoyi', 'Sinji', 'Tingting'] },
+  muse: { rate: 1.06, pitch: 1.52, voiceSlot: 2, preferred: ['Xiaoxiao', 'Tingting', 'Meijia', 'Xiaoyi', 'Sinji'] },
+  milo: { rate: 1.02, pitch: 1.62, voiceSlot: 3, preferred: ['Xiaoyi', 'Tingting', 'Meijia', 'Xiaoxiao', 'Sinji'] },
+}
+
+type VoiceMotionCommand = {
+  agentId: AgentId
+  motion: Extract<MotionState, 'dance' | 'spin' | 'march'>
+  label: string
+  response: string
+  duration: number
+}
+
+const agentAliases: Record<AgentId, string[]> = {
+  atlas: ['阿拓', 'atlas', '导航', '出行', '路线'],
+  nova: ['诺瓦', 'nova', '车辆', '守护', '车控'],
+  muse: ['缪思', 'muse', '音乐', '歌', '媒体'],
+  milo: ['米洛', 'milo', '生活', '餐厅', '吃货'],
+}
+
+function pickAgentFromText(text: string, fallback: AgentId): AgentId {
+  const lower = text.toLowerCase()
+  const found = (Object.entries(agentAliases) as [AgentId, string[]][])
+    .find(([, aliases]) => aliases.some(alias => lower.includes(alias.toLowerCase())))
+  return found?.[0] ?? fallback
+}
+
+function parseVoiceMotionCommand(text: string, fallback: AgentId): VoiceMotionCommand | null {
+  const lower = text.toLowerCase()
+  const agentId = pickAgentFromText(text, fallback)
+  const name = agents.find(agent => agent.id === agentId)?.name ?? '我'
+  if (/(跳舞|跳个舞|dance|扭一扭|律动)/i.test(lower)) {
+    return {
+      agentId,
+      motion: 'dance',
+      label: '跳舞',
+      response: `${name}收到，切到可爱律动模式。`,
+      duration: 4200,
+    }
+  }
+  if (/(旋转|转一圈|转圈|spin|rotate)/i.test(lower)) {
+    return {
+      agentId,
+      motion: 'spin',
+      label: '旋转',
+      response: `${name}转一圈给你看，注意别被可爱晃到。`,
+      duration: 3300,
+    }
+  }
+  if (/(高抬腿|原地跑|跑起来|小跑|march|run)/i.test(lower)) {
+    return {
+      agentId,
+      motion: 'march',
+      label: '高抬腿',
+      response: `${name}开始原地热身，小短腿也很认真。`,
+      duration: 3900,
+    }
+  }
+  return null
+}
+
+function chooseYouthfulVoice(
+  voices: SpeechSynthesisVoice[],
+  agentId: AgentId,
+  fallbackSlot: number,
+) {
+  const profile = ttsProfiles[agentId]
+  const scored = voices
+    .map((voice, index) => {
+      const label = `${voice.lang} ${voice.name}`
+      const zhScore = /^zh|^cmn|Chinese|普通话|國語/i.test(label) ? 4 : 0
+      const preferredScore = profile.preferred.some(name => label.toLowerCase().includes(name.toLowerCase())) ? 6 : 0
+      const avoidScore = /male|男|elder|old|老|adult/i.test(label) ? -2 : 0
+      return { voice, index, score: zhScore + preferredScore + avoidScore }
+    })
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+  const bestScore = scored[0]?.score ?? 0
+  const pool = bestScore > 0 ? scored.filter(item => item.score === bestScore) : scored
+  return pool.length ? pool[fallbackSlot % pool.length].voice : undefined
 }
 
 function AgentAvatar({ agent, active, speaking, small = false }: { agent: Agent; active?: boolean; speaking?: boolean; small?: boolean }) {
@@ -190,9 +302,8 @@ function App() {
     utterance.pitch = profile.pitch
     utterance.volume = .92
     const voices = synth.getVoices()
-    const zhVoices = voices.filter(voice => /^zh|^cmn|Chinese|普通话|國語/i.test(`${voice.lang} ${voice.name}`))
-    const pool = zhVoices.length ? zhVoices : voices
-    if (pool.length) utterance.voice = pool[profile.voiceSlot % pool.length]
+    const voice = chooseYouthfulVoice(voices, agentId, profile.voiceSlot)
+    if (voice) utterance.voice = voice
     utterance.onstart = () => {
       setSpeakingAgent(agentId)
       setVoiceMode('speaking')
@@ -210,6 +321,34 @@ function App() {
 
   const answer = (text: string, keepSession = voiceSessionRef.current) => {
     const lower = text.toLowerCase()
+    const motionCommand = parseVoiceMotionCommand(text, activeId)
+    if (motionCommand) {
+      const nextSemantic = deriveSemanticMotion(text)
+      setSemantic({ ...nextSemantic, energy: Math.max(nextSemantic.energy, .88), valence: Math.max(nextSemantic.valence, .78) })
+      setActiveId(motionCommand.agentId)
+      setVoiceMode('speaking')
+      transitionMotion(
+        motionCommand.motion,
+        motionCommand.duration,
+        keepSession ? 'listen' : 'idle',
+        'voice',
+        motionCommand.agentId,
+        { ...nextSemantic, energy: .9, valence: .82, certainty: .9 },
+      )
+      setMessages(prev => [...prev, { agent: motionCommand.agentId, text: `语音动作：${motionCommand.label}。${motionCommand.response}`, time: '刚刚' }])
+      speakAgent(motionCommand.agentId, motionCommand.response)
+      const timer = window.setTimeout(() => {
+        if (voiceSessionRef.current) {
+          setVoiceMode('listening')
+          setTranscript('还想让谁动一动？比如“缪思跳舞”。')
+        } else {
+          setVoiceMode('idle')
+          setTranscript('')
+        }
+      }, motionCommand.duration)
+      timers.current.push(timer)
+      return
+    }
     let target: AgentId = activeId
     let response = active.intro
     if (lower.includes('回家') || lower.includes('路线')) {
@@ -490,6 +629,19 @@ function App() {
               <div className="topic-icon" style={{ color: a.color, background: a.soft }}>{a.avatar}</div><div><small>{meta}</small><b>{title}</b><span>{note}</span></div><ChevronRight size={17} />
             </article>})}
             <div className="source-note"><ShieldCheck size={16} /><span>只读取公开信息源；位置与偏好默认留在车端。</span></div>
+            <div className="persona-grid">
+              {agents.map(agent => <article className="persona-card" key={agent.id} style={{ '--agent': agent.color, '--agent-soft': agent.soft } as React.CSSProperties}>
+                <header><i>{agent.avatar}</i><div><small>{agent.age} · {agent.voiceStyle}</small><b>{agent.name} · {agent.trait}</b></div></header>
+                <p>{agent.personality}</p>
+                <dl>
+                  <div><dt>喜欢</dt><dd>{agent.likes.join(' / ')}</dd></div>
+                  <div><dt>怪癖</dt><dd>{agent.quirk}</dd></div>
+                  <div><dt>成长</dt><dd>{agent.origin}</dd></div>
+                  <div><dt>关系</dt><dd>{agent.relation}</dd></div>
+                  <div><dt>矛盾</dt><dd>{agent.conflict}</dd></div>
+                </dl>
+              </article>)}
+            </div>
           </div>}
 
           {panel === 'harness' && <div className="harness-panel">

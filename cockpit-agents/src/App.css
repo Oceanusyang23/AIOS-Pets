@@ -359,6 +359,76 @@ button { font: inherit; color: inherit; }
   z-index: 30;
   bottom: calc(var(--dock-h) + 16px);
 }
+.persona-grid {
+  display: grid;
+  gap: 11px;
+  margin-top: 14px;
+  padding-bottom: 18px;
+}
+.persona-card {
+  border: 1px solid color-mix(in srgb, var(--agent) 28%, rgba(255,255,255,.1));
+  border-radius: 18px;
+  padding: 13px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--agent-soft) 62%, transparent), rgba(255,255,255,.035));
+  color: rgba(226, 242, 249, .9);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+}
+.persona-card header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 9px;
+}
+.persona-card header i {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  color: var(--agent);
+  background: rgba(255,255,255,.08);
+  font-style: normal;
+  font-size: 18px;
+}
+.persona-card small {
+  display: block;
+  font-size: 8px;
+  line-height: 1.35;
+  color: rgba(181, 216, 230, .62);
+  letter-spacing: .04em;
+}
+.persona-card b {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: #f6fbff;
+}
+.persona-card p {
+  margin: 0 0 9px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: rgba(230, 244, 250, .8);
+}
+.persona-card dl {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+.persona-card dl div {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 8px;
+}
+.persona-card dt {
+  font-size: 9px;
+  color: var(--agent);
+}
+.persona-card dd {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.45;
+  color: rgba(210, 229, 238, .72);
+}
 @media(max-height:760px){
   .cockpit-shell{--dock-h:68px}
   .voice-console{bottom:12px;height:52px}

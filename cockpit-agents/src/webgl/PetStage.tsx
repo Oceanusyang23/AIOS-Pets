@@ -8,7 +8,7 @@ const GROUND_Y = -1.66
 const ATLAS_TARGET_HEIGHT = 3.82
 const AVATAR_TARGET_HEIGHT = 3.66
 
-export type MotionState = 'idle' | 'wake' | 'listen' | 'think' | 'speak' | 'social' | 'handshake'
+export type MotionState = 'idle' | 'wake' | 'listen' | 'think' | 'speak' | 'social' | 'handshake' | 'dance' | 'spin' | 'march'
 export type PetId = 'atlas' | 'muse' | 'milo' | 'nova'
 
 type PetInfo = {
@@ -136,6 +136,7 @@ type ProductionRig = {
 
 const stateLabels: Record<MotionState, string> = {
   idle: '待机', wake: '唤醒', listen: '聆听', think: '思考', speak: '对话', social: '互聊', handshake: '握手',
+  dance: '跳舞', spin: '旋转', march: '高抬腿',
 }
 
 const profiles: Record<PetId, Rig['profile']> = {
@@ -993,6 +994,70 @@ function animateProductionAvatar(
     eyeY = -.03
     fingerCurl = .18 + Math.abs(shake) * .45
     fingerOpen = .08
+  }
+
+  if (state === 'dance') {
+    const beat = Math.sin(elapsed * 7.2 + avatar.phase)
+    const groove = Math.sin(elapsed * 3.6 + avatar.phase)
+    rootY += Math.max(0, beat) * .08
+    rootRotZ += groove * .09
+    rootRotY += groove * .12 + lookTargetX * .12
+    modelRotZ += beat * .06
+    scale = 1.02 + Math.abs(beat) * .018
+    haloOpacity = .52
+    headX += Math.abs(beat) * .045 - .018
+    headY += groove * .18
+    headZ += groove * .08
+    chestZ += groove * .09
+    leftArmZ = -.72 + beat * .18
+    rightArmZ = .72 - beat * .18
+    leftArmX = -.18 + groove * .16
+    rightArmX = -.18 - groove * .16
+    leftLowerArmZ = -.18 - beat * .16
+    rightLowerArmZ = .18 + beat * .16
+    jawX += .035 + Math.abs(beat) * .025
+    eyeX = -.025
+    fingerOpen = .62
+  }
+
+  if (state === 'spin') {
+    const spinTime = elapsed * 3.2 + avatar.phase
+    const lift = Math.sin(elapsed * 6 + avatar.phase)
+    rootY += Math.max(0, lift) * .05
+    rootRotY = spinTime
+    rootRotZ += Math.sin(elapsed * 4 + avatar.phase) * .035
+    modelRotZ += Math.sin(elapsed * 8 + avatar.phase) * .025
+    haloOpacity = .5
+    headX += -.025
+    headZ += Math.sin(elapsed * 5 + avatar.phase) * .04
+    chestZ += Math.sin(elapsed * 4 + avatar.phase) * .04
+    leftArmZ = -.46
+    rightArmZ = .46
+    leftArmX = -.16
+    rightArmX = -.16
+    fingerOpen = .7
+  }
+
+  if (state === 'march') {
+    const step = Math.sin(elapsed * 10.5 + avatar.phase)
+    const bounce = Math.abs(step)
+    rootY += bounce * .11
+    rootRotX = .08
+    rootRotZ += step * .045
+    modelRotX = -.05 + bounce * .035
+    modelRotZ += step * .045
+    haloOpacity = .46
+    headX += -.05 + bounce * .025
+    headY += step * .045
+    chestX += bounce * .055
+    leftArmZ = -.84
+    rightArmZ = .84
+    leftArmX = step * .48
+    rightArmX = -step * .48
+    leftLowerArmZ = -.32 * bounce
+    rightLowerArmZ = .32 * bounce
+    jawX += .018
+    fingerCurl = .1 + bounce * .08
   }
 
   if (intro.kind === 'run') {
