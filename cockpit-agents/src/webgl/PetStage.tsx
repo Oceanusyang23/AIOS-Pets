@@ -64,21 +64,40 @@ type ProductionAvatar = {
   baseX: number
   phase: number
   rig?: ProductionRig
-  idleAction: IdleMicroAction | null
-  nextIdleActionAt: number
+  idlePersona: IdlePersona
+  accentStartedAt: number
+  accentDuration: number
+  nextAccentAt: number
   introStartedAt: number
+  introDelay: number
 }
 
-type IdleMicroAction = {
-  kind: 'blink' | 'yawn' | 'scratch' | 'music'
-  startedAt: number
-  duration: number
+// Each avatar keeps one fixed idle "personality" (thematically matched to its role).
+type IdlePersona = 'music' | 'yawn' | 'scratch' | 'pockets'
+
+const idlePersonaByPet: Record<PetId, IdlePersona> = {
+  muse: 'music',    // 音乐策展人 · 陶醉听歌（持续律动）
+  milo: 'yawn',     // 松弛吃货 · 偶尔伸懒腰打哈欠
+  atlas: 'pockets', // 出行管家 · 双手插兜左右张望
+  nova: 'scratch',  // 理性守护者 · 偶尔挠头思考
 }
+
+// Idle accent passed into the animator each frame.
+// `accent >= 0` is the 0..1 progress of a periodic gesture (yawn / scratch);
+// continuous personas (music / pockets) always animate and pass accent = 1.
+type IdleAccent = { persona: IdlePersona; accent: number }
+
+// Live handshake grab: arm tracks the pointer's vertical position in real time.
+type HandshakeGrab = { active: boolean; pointerY: number }
 
 type IntroPhase =
   | { kind: 'run'; progress: number; time: number }
   | { kind: 'wave'; progress: number; time: number }
   | { kind: 'done' }
+
+// Left-to-right arrival order so they don't all stop in lockstep.
+const introOrderByPet: Record<PetId, number> = { atlas: 0, nova: 1, muse: 2, milo: 3 }
+const INTRO_STAGGER = 0.26
 
 type ProductionRigBone =
   | 'hips' | 'spine' | 'chest' | 'upperChest' | 'neck' | 'head' | 'jaw'
@@ -123,7 +142,7 @@ const roleBadgeMeta: Record<PetId, { symbol: string; title: string; x: string }>
   milo: { symbol: '♨', title: 'Food Service Agent', x: '86.5%' },
 }
 
-const INTRO_RUN_DURATION = 2.15
+const INTRO_RUN_DURATION = 2.4
 const INTRO_WAVE_DURATION = 3
 
 const easeOutCubic = (value: number) => 1 - Math.pow(1 - THREE.MathUtils.clamp(value, 0, 1), 3)
@@ -487,31 +506,26 @@ function driveSemanticFingers(rig: ProductionRig | undefined, delta: number, cur
   dampFingerCurl(rig, 'right', 'thumb', curl * .52, delta, -openness * .03)
 }
 
-function pickIdleAction(id: PetId): IdleMicroAction['kind'] {
-  const roll = Math.random()
-  if (id === 'muse' && roll < .42) return 'music'
-  if (roll < .34) return 'blink'
-  if (roll < .56) return 'scratch'
-  if (roll < .75) return 'yawn'
-  return 'music'
-}
-
-function idleActionDuration(kind: IdleMicroAction['kind']) {
-  if (kind === 'blink') return .55
-  if (kind === 'yawn') return 2.35
-  if (kind === 'scratch') return 2.15
-  return 2.8
-}
-
-function updateIdleAction(avatar: ProductionAvatar, elapsed: number) {
-  if (avatar.idleAction && elapsed - avatar.idleAction.startedAt > avatar.idleAction.duration) {
-    avatar.idleAction = null
-    avatar.nextIdleActionAt = elapsed + 2.4 + Math.random() * 5.6
+// Periodic personas (yawn / scratch) fire an occasional accent gesture; the rest
+// of the time the avatar holds a calm idle with arms naturally hanging.
+function resolveIdleAccent(avatar: ProductionAvatar, elapsed: number): IdleAccent {
+  const persona = avatar.idlePersona
+  if (persona === 'music' || persona === 'pockets') {
+    // Continuous personas are always animating.
+    return { persona, accent: 1 }
   }
-  if (!avatar.idleAction && elapsed > avatar.nextIdleActionAt) {
-    const kind = pickIdleAction(avatar.id)
-    avatar.idleAction = { kind, startedAt: elapsed, duration: idleActionDuration(kind) }
+  if (avatar.accentStartedAt >= 0 && elapsed - avatar.accentStartedAt > avatar.accentDuration) {
+    avatar.accentStartedAt = -1
+    avatar.nextAccentAt = elapsed + 4.5 + Math.random() * 5.5
   }
+  if (avatar.accentStartedAt < 0 && elapsed > avatar.nextAccentAt) {
+    avatar.accentStartedAt = elapsed
+    avatar.accentDuration = persona === 'yawn' ? 2.7 : 2.2
+  }
+  const accent = avatar.accentStartedAt >= 0
+    ? THREE.MathUtils.clamp((elapsed - avatar.accentStartedAt) / avatar.accentDuration, 0, 1)
+    : -1
+  return { persona, accent }
 }
 
 function prepareProductionAvatar(gltfScene: THREE.Group, fallback: Rig, agent: PetInfo, introStartedAt: number): ProductionAvatar {
@@ -565,6 +579,8 @@ function prepareProductionAvatar(gltfScene: THREE.Group, fallback: Rig, agent: P
   tag(handHit, agent.id, 'hand')
   wrapper.add(handHit)
 
+  const introDelay = introOrderByPet[agent.id] * INTRO_STAGGER
+
   return {
     id: agent.id,
     root: wrapper,
@@ -573,9 +589,12 @@ function prepareProductionAvatar(gltfScene: THREE.Group, fallback: Rig, agent: P
     baseX: fallback.baseX,
     phase: fallback.phase,
     rig,
-    idleAction: null,
-    nextIdleActionAt: introStartedAt + INTRO_RUN_DURATION + INTRO_WAVE_DURATION + 1.4 + Math.random() * 3.8,
+    idlePersona: idlePersonaByPet[agent.id],
+    accentStartedAt: -1,
+    accentDuration: 2.4,
+    nextAccentAt: introStartedAt + introDelay + INTRO_RUN_DURATION + INTRO_WAVE_DURATION + 1.6 + Math.random() * 3.5,
     introStartedAt,
+    introDelay,
   }
 }
 
@@ -587,7 +606,8 @@ function animateProductionAvatar(
   semantic: SemanticMotion,
   lookTargetX: number,
   intro: IntroPhase,
-  idleAction: IdleMicroAction | null,
+  idleAccent: IdleAccent | null,
+  handshake: HandshakeGrab | null,
 ) {
   const t = elapsed * .8 + avatar.phase
   const breath = Math.sin(t * 1.35) * .025
@@ -595,7 +615,7 @@ function animateProductionAvatar(
   let rootZ = 0
   let rootRotX = 0
   let rootRotY = lookTargetX * .18 + Math.sin(t * .38) * .018
-  const rootRotZ = Math.sin(t * .44) * .014
+  let rootRotZ = Math.sin(t * .44) * .014
   let modelRotX = 0
   let modelRotZ = 0
   let scale = 1
@@ -607,7 +627,7 @@ function animateProductionAvatar(
   let chestZ = Math.sin(t * .52) * .01
   let jawX = 0
   let leftArmZ = -1.05
-  const leftArmX = 0
+  let leftArmX = 0
   let rightArmZ = 1.05
   let rightArmX = 0
   let leftLowerArmZ = 0
@@ -618,44 +638,67 @@ function animateProductionAvatar(
   let fingerCurl = .04
   let fingerOpen = .2
 
-  if (state === 'idle' && idleAction) {
-    const localTime = elapsed - idleAction.startedAt
-    const p = easeInOutSine(localTime / idleAction.duration)
-    const pulse = Math.sin(p * Math.PI)
-    if (idleAction.kind === 'blink') {
-      headX += .018 * pulse
-      eyeX = -.11 * pulse
-      eyeY += .025 * pulse
+  if (state === 'idle' && idleAccent) {
+    // muse · 陶醉听歌：持续的头部律动、肩膀微晃、手指打拍、眼神微闭
+    if (idleAccent.persona === 'music') {
+      const groove = Math.sin(elapsed * 2.6 + avatar.phase)
+      const beat = Math.sin(elapsed * 5.2 + avatar.phase)
+      headY += groove * .17
+      headZ += groove * .13
+      headX += Math.abs(beat) * .03 - .015
+      chestZ += groove * .05
+      rootRotZ += groove * .03
+      rootY += Math.max(0, beat) * .02
+      leftArmZ = -.98 + groove * .07
+      rightArmZ = .98 - groove * .07
+      leftArmX = beat * .07
+      rightArmX = -beat * .07
+      jawX += .025 + Math.abs(beat) * .02
+      eyeX += -.04
+      fingerOpen += .25 + Math.abs(beat) * .2
     }
-    if (idleAction.kind === 'yawn') {
-      headX += -.11 * pulse
-      chestX += .035 * pulse
-      jawX += .16 * pulse
-      rightArmX += -.08 * pulse
-      rightArmZ = THREE.MathUtils.lerp(rightArmZ, .42, pulse)
-      rightLowerArmZ += -.1 * pulse
-      fingerCurl += .16 * pulse
-      eyeX += -.055 * pulse
+    // atlas · 双手插兜左右张望：手收向胯部、肘部微曲、头缓慢左右扫视
+    if (idleAccent.persona === 'pockets') {
+      const look = Math.sin(elapsed * .52 + avatar.phase)
+      leftArmZ = -.74
+      rightArmZ = .74
+      leftArmX = -.18
+      rightArmX = -.18
+      leftLowerArmZ = -.52
+      rightLowerArmZ = .52
+      fingerCurl = .55
+      fingerOpen = 0
+      headY = look * .52
+      headX += Math.sin(elapsed * .4) * .03 - .02
+      headZ += look * .05
+      eyeX = -.01
+      eyeY = look * .26
+      rootRotZ += Math.sin(elapsed * .5 + avatar.phase) * .02
     }
-    if (idleAction.kind === 'scratch') {
-      headY += -.07 * pulse
-      headZ += .035 * pulse
-      rightArmX += -.16 * pulse
-      rightArmZ = THREE.MathUtils.lerp(rightArmZ, -.46 + Math.sin(localTime * 12) * .045, pulse)
-      rightLowerArmZ += -.46 * pulse
-      rightHandX += Math.sin(localTime * 15) * .035 * pulse
-      fingerCurl += .12 * pulse
+    // milo · 打哈欠伸懒腰（周期触发）
+    if (idleAccent.persona === 'yawn' && idleAccent.accent >= 0) {
+      const pulse = Math.sin(easeInOutSine(idleAccent.accent) * Math.PI)
+      headX += -.13 * pulse
+      chestX += .05 * pulse
+      jawX += .2 * pulse
+      leftArmZ = THREE.MathUtils.lerp(leftArmZ, -.5, pulse)
+      rightArmZ = THREE.MathUtils.lerp(rightArmZ, .5, pulse)
+      leftArmX += -.26 * pulse
+      rightArmX += -.26 * pulse
+      eyeX += -.07 * pulse
+      fingerOpen += .3 * pulse
     }
-    if (idleAction.kind === 'music') {
-      const groove = Math.sin(localTime * 5.2)
-      headY += groove * .05 * pulse
-      headZ += groove * .06 * pulse
-      chestZ += groove * .035 * pulse
-      leftArmZ += groove * .05 * pulse
-      rightArmZ += groove * .05 * pulse
-      jawX += .025 * pulse
-      eyeX += -.035 * pulse
-      fingerOpen += .18 * pulse
+    // nova · 挠头思考（周期触发）
+    if (idleAccent.persona === 'scratch' && idleAccent.accent >= 0) {
+      const pulse = Math.sin(easeInOutSine(idleAccent.accent) * Math.PI)
+      headY += -.08 * pulse
+      headZ += .05 * pulse
+      headX += .04 * pulse
+      rightArmX += -.2 * pulse
+      rightArmZ = THREE.MathUtils.lerp(rightArmZ, -.5 + Math.sin(elapsed * 13) * .05, pulse)
+      rightLowerArmZ += -.5 * pulse
+      rightHandX += Math.sin(elapsed * 16) * .04 * pulse
+      fingerCurl += .25 * pulse
     }
   }
 
@@ -758,33 +801,63 @@ function animateProductionAvatar(
 
   if (intro.kind === 'run') {
     const p = easeOutCubic(intro.progress)
-    const stride = Math.sin(intro.time * 18 + avatar.phase)
-    rootZ = -6.2 * (1 - p)
-    rootY += Math.abs(stride) * .075 * (1 - intro.progress * .35)
-    rootRotX += .08 * (1 - p)
-    rootRotY += Math.sin(intro.time * 4 + avatar.phase) * .08 * (1 - p)
-    modelRotZ += stride * .035
-    leftArmZ += stride * .16
-    rightArmZ += -stride * .16
-    leftLowerArmZ += -stride * .08
-    rightLowerArmZ += stride * .08
-    headX += -.04
-    haloOpacity = .18 + p * .2
+    const decel = THREE.MathUtils.smoothstep(intro.progress, .68, 1) // 0 → 1 as they brake to a stop
+    const run = 1 - decel                                            // running intensity, fades near arrival
+    const cycle = intro.time * 12.5 + avatar.phase
+    const stride = Math.sin(cycle)
+    const bounce = Math.abs(Math.sin(cycle))
+    rootZ = -7.4 * (1 - p)
+    rootY += bounce * .12 * run                                       // springy gait, settles on stop
+    rootRotX += .18 * (1 - p) - .05 * decel                           // lean into the run, straighten up on arrival
+    rootRotY += Math.sin(intro.time * 3 + avatar.phase) * .05 * run
+    modelRotZ += stride * .05 * run
+    leftArmZ = -.86
+    rightArmZ = .86
+    leftArmX = stride * .5 * run                                      // arms pump front/back
+    rightArmX = -stride * .5 * run
+    leftLowerArmZ = -.34 * run                                        // elbows bent while running, relax at stop
+    rightLowerArmZ = .34 * run
+    headX += -.07 * run
+    headY += rootRotY * .3
+    haloOpacity = .12 + p * .2
   }
   if (intro.kind === 'wave') {
-    const wave = Math.sin(intro.time * 9 + avatar.phase) * Math.sin(Math.PI * intro.progress)
+    const env = Math.sin(Math.PI * THREE.MathUtils.clamp(intro.progress, 0, 1)) // ease wave in and out over 3s
+    const wave = Math.sin(intro.time * 8.5 + avatar.phase) * env
     rootZ = 0
-    rootY += Math.max(0, Math.sin(intro.time * 4 + avatar.phase)) * .018
-    headY += lookTargetX * .12
-    headZ += wave * .025
-    rightArmX += -.2
-    rightArmZ = -.68 + wave * .22
-    rightLowerArmZ += -.16 + wave * .14
-    rightHandX += wave * .16
+    rootY += Math.max(0, Math.sin(intro.time * 3.4 + avatar.phase)) * .02 * env
+    rootRotY += -.04 * env
+    headY += lookTargetX * .12 + wave * .04
+    headZ += wave * .03
+    headX += -.03 * env
+    rightArmX += -.35 * env
+    rightArmZ = .9 - 1.5 * env + wave * .24                           // raise the right arm and wave
+    rightLowerArmZ += (-.2 + wave * .18) * env
+    rightHandX += wave * .18
     fingerCurl = .04
-    fingerOpen = .62
-    jawX += .035 * Math.sin(Math.PI * intro.progress)
-    haloOpacity = .34
+    fingerOpen = .6
+    jawX += .03 * env
+    haloOpacity = .3 + env * .12
+  }
+
+  // Live handshake: while a hand is grabbed, the right arm reaches toward the
+  // viewer and its height tracks the pointer in real time — like a real shake.
+  if (intro.kind === 'done' && handshake?.active) {
+    const up = THREE.MathUtils.clamp(handshake.pointerY, -1, 1)
+    rootRotX = .07
+    rootRotY += -.1
+    headX = -.05
+    headY = 0
+    headZ = 0
+    leftArmZ = -1.0
+    leftArmX = 0
+    rightArmZ = -.28
+    rightArmX = -.95 - up * .38
+    rightLowerArmZ = -.32 + up * .5
+    rightHandX = up * .42
+    fingerCurl = .55
+    fingerOpen = .05
+    haloOpacity = .6
   }
 
   avatar.root.position.y = damp(avatar.root.position.y, rootY, 8, delta)
@@ -820,6 +893,7 @@ function animateRig(
   delta: number,
   semantic: SemanticMotion,
   lookTargetX: number,
+  handshake: HandshakeGrab | null,
 ) {
   const p = rig.profile
   const t = elapsed * p.tempo + rig.phase
@@ -893,6 +967,16 @@ function animateRig(
     rightElbowX = -.2 + shake
     headX = Math.max(0, Math.sin(elapsed * 4)) * .035
     haloOpacity = .48
+  }
+
+  if (handshake?.active) {
+    const up = THREE.MathUtils.clamp(handshake.pointerY, -1, 1)
+    spineRotX = .08
+    rightArmZ = .05
+    rightShoulderX = -1.2 - up * .35
+    rightElbowX = -.2 + up * .42
+    headX = .03
+    haloOpacity = .5
   }
 
   rig.root.position.y = damp(rig.root.position.y, rootY, 8, delta)
@@ -1004,7 +1088,13 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
 
     const raycaster = new THREE.Raycaster()
     const pointer = new THREE.Vector2()
-    let drag: { id: PetId; y: number; travel: number } | null = null
+    // Live handshake grab: holds which avatar's hand is grabbed and the pointer's
+    // normalized vertical position (+1 top … -1 bottom) so the arm can track it.
+    let grab: { id: PetId; pointerY: number } | null = null
+    const normalizedY = (event: PointerEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect()
+      return -((event.clientY - rect.top) / rect.height) * 2 + 1
+    }
     const hitTest = (event: PointerEvent) => {
       const rect = renderer.domElement.getBoundingClientRect()
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
@@ -1018,31 +1108,34 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
       const id = hit.object.userData.agentId as PetId
       latestRef.current.onSelect(id)
       if (String(hit.object.userData.bodyPart).startsWith('hand')) {
-        drag = { id, y: event.clientY, travel: 0 }
+        grab = { id, pointerY: normalizedY(event) }
         renderer.domElement.setPointerCapture(event.pointerId)
+        renderer.domElement.style.cursor = 'grabbing'
+        latestRef.current.onHandshake(id)
       }
     }
     const onPointerMove = (event: PointerEvent) => {
+      if (grab) {
+        // While grabbed, feed the live pointer height to the animation loop.
+        grab.pointerY = normalizedY(event)
+        renderer.domElement.style.cursor = 'grabbing'
+        return
+      }
       const hit = hitTest(event)
       const handId = hit && String(hit.object.userData.bodyPart).startsWith('hand') ? hit.object.userData.agentId as PetId : null
       setHoveredHand(handId)
       renderer.domElement.style.cursor = handId ? 'grab' : hit ? 'pointer' : 'default'
-      if (drag) {
-        drag.travel += Math.abs(event.clientY - drag.y)
-        drag.y = event.clientY
-        if (drag.travel > 34) {
-          latestRef.current.onHandshake(drag.id)
-          drag = null
-        }
-      }
     }
-    const onPointerUp = () => {
-      if (drag && drag.travel < 8) latestRef.current.onHandshake(drag.id)
-      drag = null
+    const endGrab = () => {
+      grab = null
+      setHoveredHand(null)
+      renderer.domElement.style.cursor = 'default'
     }
     renderer.domElement.addEventListener('pointerdown', onPointerDown)
     renderer.domElement.addEventListener('pointermove', onPointerMove)
-    renderer.domElement.addEventListener('pointerup', onPointerUp)
+    renderer.domElement.addEventListener('pointerup', endGrab)
+    renderer.domElement.addEventListener('pointercancel', endGrab)
+    renderer.domElement.addEventListener('pointerleave', endGrab)
 
     const resize = () => {
       const { width, height } = mount.getBoundingClientRect()
@@ -1065,7 +1158,8 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
         if (current.syncing) rigState = rig.id === current.activeId ? 'speak' : 'social'
         else if (rig.id === current.activeId) rigState = current.state
         const targetDelta = activeRig ? THREE.MathUtils.clamp((activeRig.baseX - rig.baseX) * .11, -.42, .42) : 0
-        animateRig(rig, rigState, elapsed, delta, current.semantic, targetDelta)
+        const rigGrab = grab && grab.id === rig.id ? { active: true, pointerY: grab.pointerY } : null
+        animateRig(rig, rigState, elapsed, delta, current.semantic, targetDelta, rigGrab)
       })
       productionAvatars.forEach(avatar => {
         let avatarState: MotionState = 'idle'
@@ -1073,19 +1167,20 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
         else if (avatar.id === current.activeId) avatarState = current.state
         const targetDelta = activeRig ? THREE.MathUtils.clamp((activeRig.baseX - avatar.baseX) * .11, -.42, .42) : 0
         let intro: IntroPhase = { kind: 'done' }
-        const introElapsed = Math.max(0, elapsed - avatar.introStartedAt)
+        const introElapsed = Math.max(0, elapsed - avatar.introStartedAt - avatar.introDelay)
         if (introElapsed < INTRO_RUN_DURATION) {
           intro = { kind: 'run', progress: introElapsed / INTRO_RUN_DURATION, time: introElapsed }
         } else if (introElapsed < INTRO_RUN_DURATION + INTRO_WAVE_DURATION) {
           const waveTime = introElapsed - INTRO_RUN_DURATION
           intro = { kind: 'wave', progress: waveTime / INTRO_WAVE_DURATION, time: waveTime }
         }
-        if (intro.kind === 'done' && avatarState === 'idle' && !current.syncing) {
-          updateIdleAction(avatar, elapsed)
-        } else if (avatar.idleAction) {
-          avatar.idleAction = null
-          avatar.nextIdleActionAt = elapsed + 2.4 + Math.random() * 4
+        const idleReady = intro.kind === 'done' && avatarState === 'idle' && !current.syncing
+        const idleAccent = idleReady ? resolveIdleAccent(avatar, elapsed) : null
+        if (!idleReady && avatar.accentStartedAt >= 0) {
+          avatar.accentStartedAt = -1
+          avatar.nextAccentAt = elapsed + 3 + Math.random() * 4
         }
+        const avatarGrab = grab && grab.id === avatar.id ? { active: true, pointerY: grab.pointerY } : null
         animateProductionAvatar(
           avatar,
           avatarState,
@@ -1094,7 +1189,8 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
           current.semantic,
           targetDelta,
           intro,
-          intro.kind === 'done' && avatarState === 'idle' ? avatar.idleAction : null,
+          idleAccent,
+          avatarGrab,
         )
       })
       camera.position.x = damp(camera.position.x, activeRig ? activeRig.baseX * .045 : 0, 2.5, delta)
@@ -1109,7 +1205,9 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
       observer.disconnect()
       renderer.domElement.removeEventListener('pointerdown', onPointerDown)
       renderer.domElement.removeEventListener('pointermove', onPointerMove)
-      renderer.domElement.removeEventListener('pointerup', onPointerUp)
+      renderer.domElement.removeEventListener('pointerup', endGrab)
+      renderer.domElement.removeEventListener('pointercancel', endGrab)
+      renderer.domElement.removeEventListener('pointerleave', endGrab)
       renderer.dispose()
       scene.traverse(object => {
         if (object instanceof THREE.Mesh) {
@@ -1136,7 +1234,7 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
         </button>)}
       </div>
       <div className="motion-monitor"><span className="monitor-dot" /><b>{stateLabels[state]}</b><small>{hasProductionModel('atlas') ? '4 RIGGED AGENTS · SEMANTIC BONES' : 'PROCEDURAL RIG · GLB READY'}</small></div>
-      <div className="gesture-hint" data-visible={Boolean(hoveredHand)}><span>↕</span> 上下晃动或轻点手部 · 握手</div>
+      <div className="gesture-hint" data-visible={Boolean(hoveredHand)}><span>↕</span> 按住手部上下移动 · 与它握手</div>
       <div className="motion-debug" aria-label="动作状态预览">
         {(Object.keys(stateLabels) as MotionState[]).map(key => <button key={key} className={state === key ? 'active' : ''} onClick={() => onStatePreview(key)}>{stateLabels[key]}</button>)}
       </div>
