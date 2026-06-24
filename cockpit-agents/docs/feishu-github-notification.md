@@ -4,11 +4,12 @@
 
 ## 工作流文件
 
-`.github/workflows/notify-feishu.yml`
+仓库根目录：`.github/workflows/feishu-notify.yml`
 
 触发条件：
 
 - 任意分支或 tag 的 `push`
+- PR 创建、重新打开、同步、关闭 / 合并
 - 手动 `workflow_dispatch`
 
 通知内容：
@@ -18,7 +19,7 @@
 - 最新 commit short SHA
 - commit 标题与摘要
 - 作者与推送人
-- 提交链接、compare 链接、Actions 链接
+- 提交链接 / PR 链接、compare 链接、Actions 链接
 
 ## 必需配置
 

@@ -1,97 +1,175 @@
-name: Notify Feishu on Push
+name: Notify AIOS-Pets Feishu
 
 on:
   push:
     branches: ["**"]
+    tags: ["**"]
   pull_request:
-    types: [opened, closed, merged]
+    types: [opened, reopened, synchronize, closed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   notify:
+    name: Send repository update to AIOS-Pets
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Send notification to Feishu
+    steps:
+      - name: Send Feishu group notification
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-          FEISHU_CHAT_ID: oc_98ba0dac9941993769d2b8908dcce3a0
+          FEISHU_CHAT_ID: ${{ secrets.FEISHU_AIOS_PETS_CHAT_ID }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.after }}
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          HEAD_COMMIT_URL: ${{ github.event.head_commit.url }}
+          HEAD_COMMIT_AUTHOR: ${{ github.event.head_commit.author.name }}
+          COMPARE_URL: ${{ github.event.compare }}
+          PR_ACTION: ${{ github.event.action }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          set -e
+          python3 - <<'PY'
+          import json
+          import os
+          import textwrap
+          import urllib.request
 
-          # Get tenant access token
-          TOKEN=$(curl -s -X POST "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal" \
-            -H "Content-Type: application/json" \
-            -d "{\"app_id\":\"$FEISHU_APP_ID\",\"app_secret\":\"$FEISHU_APP_SECRET\"}" | jq -r '.tenant_access_token')
+          DEFAULT_AIOS_PETS_CHAT_ID = "oc_5e5cd2c549b5e4325ffcb4e0cbb5fcd1"
 
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "Failed to get token"
-            exit 1
-          fi
+          app_id = os.environ.get("FEISHU_APP_ID", "").strip()
+          app_secret = os.environ.get("FEISHU_APP_SECRET", "").strip()
+          chat_id = os.environ.get("FEISHU_CHAT_ID", "").strip() or DEFAULT_AIOS_PETS_CHAT_ID
 
-          # Build message based on event type
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            ACTION="${{ github.event.action }}"
-            PR_TITLE=$(jq -r '.pull_request.title' < $GITHUB_EVENT_PATH)
-            PR_URL=$(jq -r '.pull_request.html_url' < $GITHUB_EVENT_PATH)
-            PR_AUTHOR=$(jq -r '.pull_request.user.login' < $GITHUB_EVENT_PATH)
-            PR_NUM=$(jq -r '.pull_request.number' < $GITHUB_EVENT_PATH)
-            PR_MERGED=$(jq -r '.pull_request.merged' < $GITHUB_EVENT_PATH)
+          if not app_id or not app_secret:
+              print("FEISHU_APP_ID / FEISHU_APP_SECRET are not configured; skipping Feishu notification.")
+              raise SystemExit(0)
 
-            if [ "$ACTION" = "opened" ]; then
-              ICON="📥"
-              TITLE="新 PR #$PR_NUM"
-            elif [ "$PR_MERGED" = "true" ]; then
-              ICON="✅"
-              TITLE="PR #$PR_NUM 已合并"
-            elif [ "$ACTION" = "closed" ]; then
-              ICON="❌"
-              TITLE="PR #$PR_NUM 已关闭"
-            else
-              ICON="🔄"
-              TITLE="PR #$PR_NUM 更新"
-            fi
+          def env(name, fallback=""):
+              return os.environ.get(name, fallback) or fallback
 
-            MSG="$ICON $TITLE
-📦 仓库: ARIOS-Pets
-🔀 标题: $PR_TITLE
-👤 作者: @$PR_AUTHOR
-🔗 链接: $PR_URL"
+          def shorten(value, width=420):
+              value = value.strip()
+              if not value:
+                  return "无详细说明。"
+              return textwrap.shorten(value.replace("\n", " "), width=width, placeholder="…")
 
-          else
-            # Push event
-            COMMIT_MSGS=$(git log --format='%s' -n 5 ${{ github.event.before }}..${{ github.event.after }} 2>/dev/null || echo "查看完整日志")
-            COMMIT_COUNT=$(echo "$COMMIT_MSGS" | wc -l | tr -d ' ')
-            BRANCH="${{ github.ref_name }}"
-            PUSHER="${{ github.actor }}"
-            COMPARE_URL="https://github.com/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.event.after }}"
+          event_name = env("EVENT_NAME")
+          repository = env("REPOSITORY")
+          actor = env("ACTOR")
+          ref_name = env("REF_NAME")
+          ref_type = env("REF_TYPE")
+          sha = env("SHA")
+          short_sha = sha[:7] if sha else "unknown"
+          run_url = env("RUN_URL")
+          repo_url = f"https://github.com/{repository}"
 
-            # Format commits
-            FORMATTED=""
-            while IFS= read -r line; do
-              FORMATTED="${FORMATTED}• ${line}
-"
-            done <<< "$COMMIT_MSGS"
+          if event_name == "pull_request":
+              pr_action = env("PR_ACTION")
+              pr_number = env("PR_NUMBER")
+              pr_title = env("PR_TITLE", "Untitled pull request")
+              pr_url = env("PR_URL", repo_url)
+              pr_author = env("PR_AUTHOR", actor)
+              pr_merged = env("PR_MERGED") == "true"
+              if pr_merged:
+                  title = f"AIOS-Pets PR 已合并 · #{pr_number}"
+                  summary = f"PR #{pr_number} 已合并：{pr_title}"
+              elif pr_action == "closed":
+                  title = f"AIOS-Pets PR 已关闭 · #{pr_number}"
+                  summary = f"PR #{pr_number} 已关闭：{pr_title}"
+              elif pr_action in {"opened", "reopened"}:
+                  title = f"AIOS-Pets 新 PR · #{pr_number}"
+                  summary = f"PR #{pr_number} 已创建：{pr_title}"
+              else:
+                  title = f"AIOS-Pets PR 更新 · #{pr_number}"
+                  summary = f"PR #{pr_number} 有新同步：{pr_title}"
 
-            MSG="🚀 新提交推送
-📦 仓库: ARIOS-Pets
-🌿 分支: $BRANCH
-👤 推送者: @$PUSHER
-📝 提交 (${COMMIT_COUNT}):
-${FORMATTED}
-🔗 对比: ${COMPARE_URL}"
-          fi
+              rows = [
+                  [{"tag": "text", "text": "仓库："}, {"tag": "a", "text": repository, "href": repo_url}],
+                  [{"tag": "text", "text": f"事件：pull_request / {pr_action}"}],
+                  [{"tag": "text", "text": summary}],
+                  [{"tag": "text", "text": f"作者：{pr_author}；触发人：{actor}"}],
+                  [
+                      {"tag": "a", "text": "查看 PR", "href": pr_url},
+                      {"tag": "text", "text": "  |  "},
+                      {"tag": "a", "text": "查看 Actions", "href": run_url},
+                  ],
+              ]
+          else:
+              message = env("HEAD_COMMIT_MESSAGE", "Manual workflow dispatch")
+              subject = message.splitlines()[0][:120]
+              detail = shorten("\n".join(message.splitlines()[1:]))
+              commit_url = env("HEAD_COMMIT_URL", f"{repo_url}/commit/{sha}")
+              compare_url = env("COMPARE_URL") or commit_url
+              author = env("HEAD_COMMIT_AUTHOR", actor)
+              title = f"AIOS-Pets GitHub 更新 · {short_sha}"
+              rows = [
+                  [{"tag": "text", "text": "仓库："}, {"tag": "a", "text": repository, "href": repo_url}],
+                  [{"tag": "text", "text": f"分支/引用：{ref_type} / {ref_name}"}],
+                  [{"tag": "text", "text": f"提交：{short_sha} · {subject}"}],
+                  [{"tag": "text", "text": f"作者：{author}；推送人：{actor}"}],
+                  [{"tag": "text", "text": f"说明：{detail}"}],
+                  [
+                      {"tag": "a", "text": "查看提交", "href": commit_url},
+                      {"tag": "text", "text": "  |  "},
+                      {"tag": "a", "text": "查看变更范围", "href": compare_url},
+                      {"tag": "text", "text": "  |  "},
+                      {"tag": "a", "text": "查看 Actions", "href": run_url},
+                  ],
+              ]
 
-          # Send to Feishu
-          PAYLOAD=$(jq -n \
-            --arg chat_id "$FEISHU_CHAT_ID" \
-            --arg text "$MSG" \
-            '{receive_id: $chat_id, msg_type: "text", content: {text: $text}}')
+          post = {
+              "zh_cn": {
+                  "title": title,
+                  "content": rows,
+              }
+          }
 
-          curl -s -X POST "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD"
+          def post_json(url, payload, headers=None):
+              data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+              request = urllib.request.Request(
+                  url,
+                  data=data,
+                  headers={"Content-Type": "application/json; charset=utf-8", **(headers or {})},
+                  method="POST",
+              )
+              with urllib.request.urlopen(request, timeout=12) as response:
+                  raw = response.read().decode("utf-8", errors="replace")
+                  return response.status, raw, json.loads(raw)
 
-          echo -e "\nNotification sent to Feishu"
+          _, _, token_response = post_json(
+              "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+              {"app_id": app_id, "app_secret": app_secret},
+          )
+          if token_response.get("code") != 0:
+              raise RuntimeError(f"Failed to get tenant_access_token: {token_response}")
+
+          message_payload = {
+              "receive_id": chat_id,
+              "msg_type": "post",
+              "content": json.dumps(post, ensure_ascii=False),
+          }
+          status, raw, send_response = post_json(
+              "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
+              message_payload,
+              headers={"Authorization": f"Bearer {token_response['tenant_access_token']}"},
+          )
+          if send_response.get("code") != 0:
+              raise RuntimeError(f"Feishu send failed: {send_response}")
+
+          print(f"Feishu notification sent to AIOS-Pets: HTTP {status}")
+          print(raw)
+          PY
