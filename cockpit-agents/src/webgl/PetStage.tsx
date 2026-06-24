@@ -72,6 +72,16 @@ type ProductionAvatar = {
   introDelay: number
 }
 
+type LoadingAvatar = {
+  id: PetId
+  root: THREE.Group
+  points: THREE.Points
+  material: THREE.ShaderMaterial
+  startedAt: number
+  completedAt: number | null
+  phase: number
+}
+
 // Each avatar keeps one fixed idle "personality" (thematically matched to its role).
 type IdlePersona = 'music' | 'yawn' | 'scratch' | 'pockets'
 
@@ -504,6 +514,192 @@ function driveSemanticFingers(rig: ProductionRig | undefined, delta: number, cur
   dampFingerCurl(rig, 'right', 'index', curl * .72, delta, openness * .025)
   dampFingerCurl(rig, 'right', 'middle', curl, delta)
   dampFingerCurl(rig, 'right', 'thumb', curl * .52, delta, -openness * .03)
+}
+
+function sampleEllipsoidSurface(
+  center: THREE.Vector3,
+  radius: THREE.Vector3,
+  jitter = .035,
+) {
+  const theta = Math.random() * Math.PI * 2
+  const z = Math.random() * 2 - 1
+  const ring = Math.sqrt(Math.max(0, 1 - z * z))
+  return new THREE.Vector3(
+    center.x + Math.cos(theta) * ring * radius.x + (Math.random() - .5) * jitter,
+    center.y + z * radius.y + (Math.random() - .5) * jitter,
+    center.z + Math.sin(theta) * ring * radius.z + (Math.random() - .5) * jitter,
+  )
+}
+
+function sampleCapsuleColumn(
+  center: THREE.Vector3,
+  radius: THREE.Vector3,
+  height: number,
+  jitter = .025,
+) {
+  const y = (Math.random() - .5) * height
+  const angle = Math.random() * Math.PI * 2
+  const edgeBias = .72 + Math.random() * .28
+  return new THREE.Vector3(
+    center.x + Math.cos(angle) * radius.x * edgeBias + (Math.random() - .5) * jitter,
+    center.y + y + (Math.random() - .5) * jitter,
+    center.z + Math.sin(angle) * radius.z * edgeBias + (Math.random() - .5) * jitter,
+  )
+}
+
+function sampleLineSegment(from: THREE.Vector3, to: THREE.Vector3, jitter = .035) {
+  const p = from.clone().lerp(to, Math.random())
+  p.x += (Math.random() - .5) * jitter
+  p.y += (Math.random() - .5) * jitter
+  p.z += (Math.random() - .5) * jitter
+  return p
+}
+
+function sampleLoadingParticlePosition(id: PetId) {
+  const roll = Math.random()
+  if (roll < .24) return sampleEllipsoidSurface(new THREE.Vector3(0, 2.34, .02), new THREE.Vector3(.58, .55, .3), .04)
+  if (roll < .46) return sampleCapsuleColumn(new THREE.Vector3(0, 1.23, 0), new THREE.Vector3(.58, .5, .28), 1.35, .04)
+  if (roll < .57) return sampleEllipsoidSurface(new THREE.Vector3(-.34, 2.88, -.02), new THREE.Vector3(.16, .42, .11), .035)
+  if (roll < .68) return sampleEllipsoidSurface(new THREE.Vector3(.34, 2.88, -.02), new THREE.Vector3(.16, .42, .11), .035)
+  if (roll < .76) return sampleCapsuleColumn(new THREE.Vector3(-.68, 1.55, .02), new THREE.Vector3(.11, .11, .1), 1.18, .03)
+  if (roll < .84) return sampleCapsuleColumn(new THREE.Vector3(.68, 1.55, .02), new THREE.Vector3(.11, .11, .1), 1.18, .03)
+  if (roll < .9) return sampleCapsuleColumn(new THREE.Vector3(-.24, .43, .04), new THREE.Vector3(.17, .14, .13), .82, .03)
+  if (roll < .96) return sampleCapsuleColumn(new THREE.Vector3(.24, .43, .04), new THREE.Vector3(.17, .14, .13), .82, .03)
+  if (id === 'atlas') return sampleLineSegment(new THREE.Vector3(-.86, .15, .08), new THREE.Vector3(-1.18, 1.55, .1), .045)
+  if (id === 'nova') return sampleLineSegment(new THREE.Vector3(.15, 1.72, .18), new THREE.Vector3(.82, 1.9, .2), .05)
+  if (id === 'muse') return sampleEllipsoidSurface(new THREE.Vector3(-.58, 2.32, .03), new THREE.Vector3(.14, .2, .09), .03)
+  return sampleLineSegment(new THREE.Vector3(.78, 1.22, .12), new THREE.Vector3(1.08, 1.88, .1), .04)
+}
+
+function createLoadingParticleMaterial() {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    vertexColors: true,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      uTime: { value: 0 },
+      uReveal: { value: 0 },
+      uDisperse: { value: 0 },
+      uOpacity: { value: 1 },
+      uPixelRatio: { value: Math.min(window.devicePixelRatio, 1.8) },
+    },
+    vertexShader: `
+      uniform float uTime;
+      uniform float uReveal;
+      uniform float uDisperse;
+      uniform float uOpacity;
+      uniform float uPixelRatio;
+      attribute float aSize;
+      attribute float aSeed;
+      attribute float aBirth;
+      attribute vec3 aScatter;
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        float reveal = smoothstep(aBirth - 0.08, aBirth + 0.18, uReveal);
+        float drift = sin(uTime * (0.72 + aSeed * 0.34) + aSeed * 19.37);
+        vec3 loose = vec3(
+          sin(uTime * 0.55 + aSeed * 31.0),
+          cos(uTime * 0.64 + aSeed * 17.0),
+          sin(uTime * 0.47 + aSeed * 23.0)
+        ) * (0.015 + aSeed * 0.045);
+        vec3 pos = position + loose + aScatter * pow(uDisperse, 1.22);
+        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+        float twinkle = 0.78 + sin(uTime * 2.4 + aSeed * 41.0) * 0.22;
+        gl_PointSize = aSize * twinkle * uPixelRatio * (260.0 / max(1.0, -mvPosition.z));
+        gl_Position = projectionMatrix * mvPosition;
+        vColor = color;
+        vAlpha = reveal * (1.0 - smoothstep(0.05, 1.0, uDisperse)) * uOpacity;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        vec2 uv = gl_PointCoord - vec2(0.5);
+        float d = length(uv);
+        float soft = smoothstep(0.5, 0.08, d);
+        float core = smoothstep(0.18, 0.0, d) * 0.35;
+        gl_FragColor = vec4(vColor, (soft + core) * vAlpha);
+      }
+    `,
+  })
+}
+
+function createLoadingAvatar(agent: PetInfo, fallback: Rig, startedAt: number): LoadingAvatar {
+  const count = agent.id === 'atlas' ? 1700 : 1450
+  const positions = new Float32Array(count * 3)
+  const scatters = new Float32Array(count * 3)
+  const colors = new Float32Array(count * 3)
+  const sizes = new Float32Array(count)
+  const seeds = new Float32Array(count)
+  const births = new Float32Array(count)
+  const accent = new THREE.Color(agent.color)
+  const cool = new THREE.Color(agent.id === 'milo' ? '#ffb66f' : agent.id === 'muse' ? '#ffd6f5' : agent.id === 'nova' ? '#c7a8ff' : '#bff8ff')
+  const white = new THREE.Color('#ffffff')
+
+  for (let index = 0; index < count; index += 1) {
+    const position = sampleLoadingParticlePosition(agent.id)
+    positions[index * 3] = position.x
+    positions[index * 3 + 1] = position.y
+    positions[index * 3 + 2] = position.z
+
+    const scatter = position.clone().sub(new THREE.Vector3(0, 1.65, 0))
+    if (scatter.lengthSq() < .01) scatter.set(Math.random() - .5, Math.random() + .2, Math.random() - .5)
+    scatter.normalize().multiplyScalar(.42 + Math.random() * 1.25)
+    scatter.y += .35 + Math.random() * .72
+    scatters[index * 3] = scatter.x
+    scatters[index * 3 + 1] = scatter.y
+    scatters[index * 3 + 2] = scatter.z
+
+    const color = white.clone().lerp(Math.random() > .52 ? accent : cool, .48 + Math.random() * .45)
+    colors[index * 3] = color.r
+    colors[index * 3 + 1] = color.g
+    colors[index * 3 + 2] = color.b
+    sizes[index] = .16 + Math.random() * .36
+    seeds[index] = Math.random()
+    births[index] = Math.pow(Math.random(), 1.35)
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geometry.setAttribute('aScatter', new THREE.BufferAttribute(scatters, 3))
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1))
+  geometry.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1))
+  geometry.setAttribute('aBirth', new THREE.BufferAttribute(births, 1))
+  geometry.computeBoundingSphere()
+
+  const material = createLoadingParticleMaterial()
+  const points = new THREE.Points(geometry, material)
+  points.frustumCulled = false
+  points.renderOrder = 3
+
+  const root = new THREE.Group()
+  root.name = `loading_particles_${agent.id}`
+  root.position.set(fallback.baseX + (agent.id === 'atlas' ? -.08 : 0), GROUND_Y, 0)
+  root.userData.agentId = agent.id
+  root.add(points)
+
+  return { id: agent.id, root, points, material, startedAt, completedAt: null, phase: fallback.phase }
+}
+
+function animateLoadingAvatar(loader: LoadingAvatar, elapsed: number, delta: number) {
+  const local = Math.max(0, elapsed - loader.startedAt)
+  const reveal = .16 + easeInOutSine(THREE.MathUtils.clamp(local / 1.75, 0, 1)) * .84
+  const disperseProgress = loader.completedAt === null
+    ? 0
+    : easeOutCubic(THREE.MathUtils.clamp((elapsed - loader.completedAt) / 1.55, 0, 1))
+  loader.material.uniforms.uTime.value = elapsed + loader.phase
+  loader.material.uniforms.uReveal.value = reveal
+  loader.material.uniforms.uDisperse.value = disperseProgress
+  loader.material.uniforms.uOpacity.value = loader.completedAt === null ? .92 : 1 - disperseProgress
+  loader.root.position.y = damp(loader.root.position.y, GROUND_Y + Math.sin(elapsed * .7 + loader.phase) * .018, 7, delta)
+  loader.root.rotation.y = damp(loader.root.rotation.y, Math.sin(elapsed * .2 + loader.phase) * .018, 5, delta)
+  loader.points.rotation.z = Math.sin(elapsed * .3 + loader.phase) * .01
 }
 
 // Periodic personas (yawn / scratch) fire an occasional accent gesture; the rest
@@ -1061,10 +1257,21 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
     scene.add(grid)
 
     const rigs = agents.map((agent, index) => createPet(agent, index))
-    rigs.forEach(rig => scene.add(rig.root))
+    rigs.forEach(rig => {
+      rig.root.visible = false
+      rig.root.traverse(object => object.layers.disable(0))
+      scene.add(rig.root)
+    })
     const productionAvatars: ProductionAvatar[] = []
     let disposed = false
     const clock = new THREE.Clock()
+    const loadingAvatars = agents
+      .map(agent => {
+        const fallback = rigs.find(rig => rig.id === agent.id)
+        return fallback ? createLoadingAvatar(agent, fallback, clock.elapsedTime) : null
+      })
+      .filter(Boolean) as LoadingAvatar[]
+    loadingAvatars.forEach(loaderAvatar => scene.add(loaderAvatar.root))
     const loader = new GLTFLoader()
     agents.forEach(agent => {
       const fallback = rigs.find(rig => rig.id === agent.id)
@@ -1075,7 +1282,10 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
         gltf => {
           if (disposed) return
           const avatar = prepareProductionAvatar(gltf.scene, fallback, agent, clock.elapsedTime)
-          fallback.root.visible = false
+          const loadingAvatar = loadingAvatars.find(item => item.id === agent.id)
+          if (loadingAvatar && loadingAvatar.completedAt === null) {
+            loadingAvatar.completedAt = Math.max(clock.elapsedTime, loadingAvatar.startedAt + 1.8)
+          }
           productionAvatars.push(avatar)
           scene.add(avatar.root)
         },
@@ -1139,9 +1349,14 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
 
     const resize = () => {
       const { width, height } = mount.getBoundingClientRect()
+      const pixelRatio = Math.min(window.devicePixelRatio, 1.8)
+      renderer.setPixelRatio(pixelRatio)
       renderer.setSize(width, height, false)
       camera.aspect = width / Math.max(height, 1)
       camera.updateProjectionMatrix()
+      loadingAvatars.forEach(loadingAvatar => {
+        loadingAvatar.material.uniforms.uPixelRatio.value = pixelRatio
+      })
     }
     const observer = new ResizeObserver(resize)
     observer.observe(mount); resize()
@@ -1152,6 +1367,16 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
       const elapsed = clock.elapsedTime
       const current = latestRef.current
       const activeRig = rigs.find(rig => rig.id === current.activeId)
+      for (let index = loadingAvatars.length - 1; index >= 0; index -= 1) {
+        const loadingAvatar = loadingAvatars[index]
+        animateLoadingAvatar(loadingAvatar, elapsed, delta)
+        if (loadingAvatar.completedAt !== null && elapsed - loadingAvatar.completedAt > 1.65) {
+          scene.remove(loadingAvatar.root)
+          loadingAvatar.points.geometry.dispose()
+          loadingAvatar.material.dispose()
+          loadingAvatars.splice(index, 1)
+        }
+      }
       rigs.forEach(rig => {
         if (productionAvatars.some(avatar => avatar.id === rig.id)) return
         let rigState: MotionState = 'idle'
@@ -1211,6 +1436,11 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
       renderer.dispose()
       scene.traverse(object => {
         if (object instanceof THREE.Mesh) {
+          object.geometry.dispose()
+          if (Array.isArray(object.material)) object.material.forEach(mat => mat.dispose())
+          else object.material.dispose()
+        }
+        if (object instanceof THREE.Points) {
           object.geometry.dispose()
           if (Array.isArray(object.material)) object.material.forEach(mat => mat.dispose())
           else object.material.dispose()
