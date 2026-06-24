@@ -114,6 +114,8 @@ type ProductionRigBone =
   | 'leftEye' | 'rightEye'
   | 'leftShoulder' | 'leftUpperArm' | 'leftLowerArm' | 'leftHand'
   | 'rightShoulder' | 'rightUpperArm' | 'rightLowerArm' | 'rightHand'
+  | 'leftUpperLeg' | 'leftLowerLeg' | 'leftFoot' | 'leftToes'
+  | 'rightUpperLeg' | 'rightLowerLeg' | 'rightFoot' | 'rightToes'
   | 'leftIndexProximal' | 'leftIndexIntermediate' | 'leftIndexDistal'
   | 'rightIndexProximal' | 'rightIndexIntermediate' | 'rightIndexDistal'
   | 'leftThumbProximal' | 'leftThumbIntermediate' | 'leftThumbDistal'
@@ -400,6 +402,14 @@ function bindProductionRig(root: THREE.Object3D): ProductionRig | undefined {
     rightUpperArm: 'RightUpperArm',
     rightLowerArm: 'RightLowerArm',
     rightHand: 'RightHand',
+    leftUpperLeg: 'LeftUpperLeg',
+    leftLowerLeg: 'LeftLowerLeg',
+    leftFoot: 'LeftFoot',
+    leftToes: 'LeftToes',
+    rightUpperLeg: 'RightUpperLeg',
+    rightLowerLeg: 'RightLowerLeg',
+    rightFoot: 'RightFoot',
+    rightToes: 'RightToes',
     leftIndexProximal: 'LeftIndexProximal',
     leftIndexIntermediate: 'LeftIndexIntermediate',
     leftIndexDistal: 'LeftIndexDistal',
@@ -441,6 +451,8 @@ function bindProductionRig(root: THREE.Object3D): ProductionRig | undefined {
     bones.jaw && 'expression.jaw',
     bones.upperChest && 'posture.chest',
     bones.leftUpperArm && bones.rightUpperArm && 'gesture.arms',
+    bones.leftUpperLeg && bones.rightUpperLeg && 'locomotion.legs',
+    bones.leftFoot && bones.rightFoot && 'locomotion.feet',
     (bones.leftIndexProximal || bones.leftMiddleProximal || bones.leftThumbProximal || bones.rightIndexProximal || bones.rightMiddleProximal || bones.rightThumbProximal) && 'gesture.fingers',
   ].filter(Boolean) as string[]
   const report = {
@@ -823,13 +835,30 @@ function animateProductionAvatar(
   let chestX = Math.sin(t * 1.1) * .012
   let chestZ = Math.sin(t * .52) * .01
   let jawX = 0
-  let leftArmZ = -1.05
-  let leftArmX = 0
-  let rightArmZ = 1.05
-  let rightArmX = 0
+  let leftArmY = 0
+  let rightArmY = 0
+  let leftArmZ = 0
+  let leftArmX = -1.15
+  let rightArmZ = 0
+  let rightArmX = -1.15
   let leftLowerArmZ = 0
   let rightLowerArmZ = 0
+  let leftHandX = 0
   let rightHandX = 0
+  let hipsX = 0
+  let hipsZ = 0
+  let leftUpperLegX = 0
+  let leftUpperLegZ = 0
+  let rightUpperLegX = 0
+  let rightUpperLegZ = 0
+  let leftLowerLegX = 0
+  let rightLowerLegX = 0
+  let leftFootX = 0
+  let leftFootZ = 0
+  let rightFootX = 0
+  let rightFootZ = 0
+  let leftToesX = 0
+  let rightToesX = 0
   let eyeY = headY * .18
   let eyeX = 0
   let fingerCurl = .04
@@ -846,10 +875,12 @@ function animateProductionAvatar(
       chestZ += groove * .05
       rootRotZ += groove * .03
       rootY += Math.max(0, beat) * .02
-      leftArmZ = -.98 + groove * .07
-      rightArmZ = .98 - groove * .07
-      leftArmX = beat * .07
-      rightArmX = -beat * .07
+      leftArmY = 0
+      rightArmY = 0
+      leftArmZ = -.08 + groove * .04
+      rightArmZ = .08 + groove * .04
+      leftArmX = -1.02 + beat * .12
+      rightArmX = -1.02 - beat * .12
       jawX += .025 + Math.abs(beat) * .02
       eyeX += -.04
       fingerOpen += .25 + Math.abs(beat) * .2
@@ -857,10 +888,12 @@ function animateProductionAvatar(
     // atlas · 双手插兜左右张望：手收向胯部、肘部微曲、头缓慢左右扫视
     if (idleAccent.persona === 'pockets') {
       const look = Math.sin(elapsed * .52 + avatar.phase)
-      leftArmZ = -.74
-      rightArmZ = .74
-      leftArmX = -.18
-      rightArmX = -.18
+      leftArmY = 0
+      rightArmY = 0
+      leftArmZ = -.08
+      rightArmZ = .08
+      leftArmX = -1.38
+      rightArmX = -1.38
       leftLowerArmZ = -.52
       rightLowerArmZ = .52
       fingerCurl = .55
@@ -878,10 +911,12 @@ function animateProductionAvatar(
       headX += -.13 * pulse
       chestX += .05 * pulse
       jawX += .2 * pulse
-      leftArmZ = THREE.MathUtils.lerp(leftArmZ, -.5, pulse)
-      rightArmZ = THREE.MathUtils.lerp(rightArmZ, .5, pulse)
-      leftArmX += -.26 * pulse
-      rightArmX += -.26 * pulse
+      leftArmY = 0
+      rightArmY = 0
+      leftArmZ = THREE.MathUtils.lerp(leftArmZ, -.2, pulse)
+      rightArmZ = THREE.MathUtils.lerp(rightArmZ, .2, pulse)
+      leftArmX = THREE.MathUtils.lerp(leftArmX, .42, pulse)
+      rightArmX = THREE.MathUtils.lerp(rightArmX, .42, pulse)
       eyeX += -.07 * pulse
       fingerOpen += .3 * pulse
     }
@@ -891,8 +926,9 @@ function animateProductionAvatar(
       headY += -.08 * pulse
       headZ += .05 * pulse
       headX += .04 * pulse
-      rightArmX += -.2 * pulse
-      rightArmZ = THREE.MathUtils.lerp(rightArmZ, -.5 + Math.sin(elapsed * 13) * .05, pulse)
+      rightArmX = THREE.MathUtils.lerp(rightArmX, -.1, pulse)
+      rightArmY = 0
+      rightArmZ = THREE.MathUtils.lerp(rightArmZ, -.18 + Math.sin(elapsed * 13) * .05, pulse)
       rightLowerArmZ += -.5 * pulse
       rightHandX += Math.sin(elapsed * 16) * .04 * pulse
       fingerCurl += .25 * pulse
@@ -908,8 +944,10 @@ function animateProductionAvatar(
     haloOpacity = .5
     headX = -.05
     headZ = pulse * .026
-    leftArmZ = -.88
-    rightArmZ = .88
+    leftArmY = 0
+    rightArmY = 0
+    leftArmZ = -.1
+    rightArmZ = .1
     eyeX = -.025
     fingerCurl = .08
     fingerOpen = .45
@@ -922,8 +960,10 @@ function animateProductionAvatar(
     headX = -.12
     headY = -.08 + lookTargetX * .18
     chestX = .045
-    leftArmZ = -.94
-    rightArmZ = .94
+    leftArmY = 0
+    rightArmY = 0
+    leftArmZ = -.08
+    rightArmZ = .08
     eyeX = -.035
     eyeY = -.04 + lookTargetX * .1
     fingerCurl = .02
@@ -937,8 +977,9 @@ function animateProductionAvatar(
     headX = -.17
     headY = .16 + Math.sin(t * .7) * .03
     chestZ = -.035
-    rightArmX = -.08
-    rightArmZ = .48
+    rightArmX = -.18
+    rightArmY = 0
+    rightArmZ = .12
     rightLowerArmZ = .1
     eyeX = -.055
     eyeY = .06
@@ -957,9 +998,11 @@ function animateProductionAvatar(
     headZ = beat * .025
     chestZ = beat * .022
     jawX = .018 + Math.abs(beat) * .045
-    rightArmZ = .72 + beat * .08
+    rightArmY = 0
+    rightArmZ = .08 + beat * .04
     rightLowerArmZ = .035 + beat * .035
-    leftArmZ = -.82 - Math.sin(elapsed * 3.2) * .04 * semantic.valence
+    leftArmY = 0
+    leftArmZ = -.08 - Math.sin(elapsed * 3.2) * .03 * semantic.valence
     eyeX = beat * .012
     eyeY = lookTargetX * .08 + beat * .01
     fingerCurl = .08 + Math.abs(beat) * .08 * semantic.energy
@@ -971,8 +1014,10 @@ function animateProductionAvatar(
     haloOpacity = .2
     headY = lookTargetX * .48
     chestZ = -lookTargetX * .045
-    leftArmZ = -.9
-    rightArmZ = .9
+    leftArmY = 0
+    rightArmY = 0
+    leftArmZ = -.06
+    rightArmZ = .06
     eyeY = lookTargetX * .12
     fingerCurl = .05
     fingerOpen = .28
@@ -986,8 +1031,9 @@ function animateProductionAvatar(
     haloOpacity = .58
     headX = -.06
     headY = -.08
-    rightArmX = -.18
-    rightArmZ = -.18 + shake * .7
+    rightArmX = -.2
+    rightArmY = 0
+    rightArmZ = -.08 + shake * .18
     rightLowerArmZ = -.1 + shake * .55
     rightHandX = shake * .5
     eyeX = -.02
@@ -999,6 +1045,8 @@ function animateProductionAvatar(
   if (state === 'dance') {
     const beat = Math.sin(elapsed * 7.2 + avatar.phase)
     const groove = Math.sin(elapsed * 3.6 + avatar.phase)
+    const leftTap = Math.max(0, Math.sin(elapsed * 7.2 + avatar.phase))
+    const rightTap = Math.max(0, -Math.sin(elapsed * 7.2 + avatar.phase))
     rootY += Math.max(0, beat) * .08
     rootRotZ += groove * .09
     rootRotY += groove * .12 + lookTargetX * .12
@@ -1009,12 +1057,23 @@ function animateProductionAvatar(
     headY += groove * .18
     headZ += groove * .08
     chestZ += groove * .09
-    leftArmZ = -.72 + beat * .18
-    rightArmZ = .72 - beat * .18
-    leftArmX = -.18 + groove * .16
-    rightArmX = -.18 - groove * .16
+    leftArmY = 0
+    rightArmY = 0
+    leftArmZ = -.12 + beat * .12
+    rightArmZ = .12 - beat * .12
+    leftArmX = -1.0 + groove * .16
+    rightArmX = -1.0 - groove * .16
     leftLowerArmZ = -.18 - beat * .16
     rightLowerArmZ = .18 + beat * .16
+    hipsZ += -groove * .08
+    leftUpperLegX = -.18 * leftTap + .06 * rightTap
+    rightUpperLegX = -.18 * rightTap + .06 * leftTap
+    leftLowerLegX = .28 * leftTap
+    rightLowerLegX = .28 * rightTap
+    leftFootX = -.18 * leftTap
+    rightFootX = -.18 * rightTap
+    leftToesX = .18 * leftTap
+    rightToesX = .18 * rightTap
     jawX += .035 + Math.abs(beat) * .025
     eyeX = -.025
     fingerOpen = .62
@@ -1023,6 +1082,7 @@ function animateProductionAvatar(
   if (state === 'spin') {
     const spinTime = elapsed * 3.2 + avatar.phase
     const lift = Math.sin(elapsed * 6 + avatar.phase)
+    const toe = Math.max(0, lift)
     rootY += Math.max(0, lift) * .05
     rootRotY = spinTime
     rootRotZ += Math.sin(elapsed * 4 + avatar.phase) * .035
@@ -1031,31 +1091,57 @@ function animateProductionAvatar(
     headX += -.025
     headZ += Math.sin(elapsed * 5 + avatar.phase) * .04
     chestZ += Math.sin(elapsed * 4 + avatar.phase) * .04
-    leftArmZ = -.46
-    rightArmZ = .46
-    leftArmX = -.16
-    rightArmX = -.16
+    leftArmY = 0
+    rightArmY = 0
+    leftArmZ = -.08
+    rightArmZ = .08
+    leftArmX = -.75
+    rightArmX = -.75
+    leftUpperLegZ = -.08
+    rightUpperLegZ = .08
+    leftFootZ = -.12
+    rightFootZ = .12
+    leftToesX = .22 * toe
+    rightToesX = .22 * toe
     fingerOpen = .7
   }
 
   if (state === 'march') {
-    const step = Math.sin(elapsed * 10.5 + avatar.phase)
-    const bounce = Math.abs(step)
-    rootY += bounce * .11
-    rootRotX = .08
-    rootRotZ += step * .045
-    modelRotX = -.05 + bounce * .035
-    modelRotZ += step * .045
+    const cycle = elapsed * 10.8 + avatar.phase
+    const step = Math.sin(cycle)
+    const leftLift = Math.max(0, step)
+    const rightLift = Math.max(0, -step)
+    const bounce = Math.max(leftLift, rightLift)
+    const softLand = Math.abs(Math.cos(cycle)) ** 1.8
+    rootY += bounce * .1 + softLand * .018
+    rootRotX = .075
+    rootRotZ += step * .04
+    modelRotX = -.055 + bounce * .03
+    modelRotZ += step * .035
+    hipsX += -bounce * .045
+    hipsZ += -step * .055
     haloOpacity = .46
     headX += -.05 + bounce * .025
     headY += step * .045
     chestX += bounce * .055
-    leftArmZ = -.84
-    rightArmZ = .84
-    leftArmX = step * .48
-    rightArmX = -step * .48
-    leftLowerArmZ = -.32 * bounce
-    rightLowerArmZ = .32 * bounce
+    leftArmY = 0
+    rightArmY = 0
+    leftArmZ = -.08 - rightLift * .04
+    rightArmZ = .08 + leftLift * .04
+    leftArmX = -1.08 - step * .42
+    rightArmX = -1.08 + step * .42
+    leftLowerArmZ = -.25 - rightLift * .18
+    rightLowerArmZ = .25 + leftLift * .18
+    leftUpperLegX = -.78 * leftLift + .18 * rightLift
+    rightUpperLegX = -.78 * rightLift + .18 * leftLift
+    leftUpperLegZ = -.03 - leftLift * .06
+    rightUpperLegZ = .03 + rightLift * .06
+    leftLowerLegX = 1.05 * leftLift - .18 * rightLift
+    rightLowerLegX = 1.05 * rightLift - .18 * leftLift
+    leftFootX = -.44 * leftLift + .08 * rightLift
+    rightFootX = -.44 * rightLift + .08 * leftLift
+    leftToesX = .34 * leftLift
+    rightToesX = .34 * rightLift
     jawX += .018
     fingerCurl = .1 + bounce * .08
   }
@@ -1064,41 +1150,80 @@ function animateProductionAvatar(
     const p = easeOutCubic(intro.progress)
     const decel = THREE.MathUtils.smoothstep(intro.progress, .68, 1) // 0 → 1 as they brake to a stop
     const run = 1 - decel                                            // running intensity, fades near arrival
-    const cycle = intro.time * 12.5 + avatar.phase
+    const cycle = intro.time * 13.8 + avatar.phase
     const stride = Math.sin(cycle)
-    const bounce = Math.abs(Math.sin(cycle))
+    const leftDrive = Math.max(0, stride)
+    const rightDrive = Math.max(0, -stride)
+    const bounce = Math.max(leftDrive, rightDrive)
+    const footFall = Math.abs(Math.cos(cycle)) ** 2
+    const brake = THREE.MathUtils.smoothstep(intro.progress, .76, 1)
     rootZ = -7.4 * (1 - p)
-    rootY += bounce * .12 * run                                       // springy gait, settles on stop
-    rootRotX += .18 * (1 - p) - .05 * decel                           // lean into the run, straighten up on arrival
-    rootRotY += Math.sin(intro.time * 3 + avatar.phase) * .05 * run
-    modelRotZ += stride * .05 * run
-    leftArmZ = -.86
-    rightArmZ = .86
-    leftArmX = stride * .5 * run                                      // arms pump front/back
-    rightArmX = -stride * .5 * run
-    leftLowerArmZ = -.34 * run                                        // elbows bent while running, relax at stop
-    rightLowerArmZ = .34 * run
-    headX += -.07 * run
+    rootY += (bounce * .11 + footFall * .018) * run - brake * .025     // springy gait, then a tiny squash on stop
+    rootRotX += .19 * (1 - p) - .065 * brake                           // lean into run, then settle backward
+    rootRotY += Math.sin(intro.time * 2.6 + avatar.phase) * .05 * run
+    rootRotZ += stride * .035 * run
+    modelRotZ += stride * .046 * run
+    hipsX += -bounce * .04 * run
+    hipsZ += -stride * .052 * run
+    chestX += bounce * .04 * run
+    leftArmY = 0
+    rightArmY = 0
+    leftArmZ = -.08 - rightDrive * .05
+    rightArmZ = .08 + leftDrive * .05
+    leftArmX = -1.06 - stride * .48 * run                              // arms pump opposite legs, from a naturally lowered base
+    rightArmX = -1.06 + stride * .48 * run
+    leftLowerArmZ = -.28 * run - rightDrive * .1
+    rightLowerArmZ = .28 * run + leftDrive * .1
+    leftUpperLegX = -.58 * leftDrive * run + .18 * rightDrive * run
+    rightUpperLegX = -.58 * rightDrive * run + .18 * leftDrive * run
+    leftUpperLegZ = -.035 - leftDrive * .04 * run
+    rightUpperLegZ = .035 + rightDrive * .04 * run
+    leftLowerLegX = .82 * leftDrive * run - .14 * rightDrive * run
+    rightLowerLegX = .82 * rightDrive * run - .14 * leftDrive * run
+    leftFootX = -.34 * leftDrive * run + .07 * rightDrive * run
+    rightFootX = -.34 * rightDrive * run + .07 * leftDrive * run
+    leftFootZ = -.035 * run
+    rightFootZ = .035 * run
+    leftToesX = .26 * leftDrive * run
+    rightToesX = .26 * rightDrive * run
+    headX += -.07 * run + brake * .035
     headY += rootRotY * .3
+    jawX += .012 * run
+    fingerCurl = .18 * run
+    fingerOpen = .28 * run
     haloOpacity = .12 + p * .2
   }
   if (intro.kind === 'wave') {
     const env = Math.sin(Math.PI * THREE.MathUtils.clamp(intro.progress, 0, 1)) // ease wave in and out over 3s
-    const wave = Math.sin(intro.time * 8.5 + avatar.phase) * env
+    const wave = Math.sin(intro.time * 9.2 + avatar.phase) * env
+    const helloLift = easeInOutSine(THREE.MathUtils.clamp(intro.progress * 1.9, 0, 1)) *
+      (1 - easeInOutSine(THREE.MathUtils.clamp((intro.progress - .82) / .18, 0, 1)))
     rootZ = 0
-    rootY += Math.max(0, Math.sin(intro.time * 3.4 + avatar.phase)) * .02 * env
-    rootRotY += -.04 * env
-    headY += lookTargetX * .12 + wave * .04
-    headZ += wave * .03
-    headX += -.03 * env
-    rightArmX += -.35 * env
-    rightArmZ = .9 - 1.5 * env + wave * .24                           // raise the right arm and wave
-    rightLowerArmZ += (-.2 + wave * .18) * env
+    rootY += Math.max(0, Math.sin(intro.time * 3.4 + avatar.phase)) * .025 * env
+    rootRotY += -.035 * helloLift
+    rootRotZ += wave * .018
+    headY += lookTargetX * .12 + wave * .045
+    headZ += wave * .035
+    headX += -.03 * helloLift
+    chestX += .025 * helloLift
+    leftArmX = THREE.MathUtils.lerp(leftArmX, .72, helloLift)
+    rightArmX = THREE.MathUtils.lerp(rightArmX, .72, helloLift)
+    leftArmY = 0
+    rightArmY = 0
+    leftArmZ = THREE.MathUtils.lerp(leftArmZ, -.18 + wave * .08, helloLift)
+    rightArmZ = THREE.MathUtils.lerp(rightArmZ, .18 + wave * .08, helloLift)
+    leftLowerArmZ += (-.28 - wave * .16) * helloLift
+    rightLowerArmZ += (.28 + wave * .16) * helloLift
+    leftHandX += -wave * .1
     rightHandX += wave * .18
+    leftUpperLegX = -.04 * helloLift
+    rightUpperLegX = -.04 * helloLift
+    leftLowerLegX = .12 * helloLift
+    rightLowerLegX = .12 * helloLift
     fingerCurl = .04
     fingerOpen = .6
-    jawX += .03 * env
-    haloOpacity = .3 + env * .12
+    jawX += .04 * helloLift
+    haloOpacity = .3 + helloLift * .12
   }
 
   // Live handshake: while a hand is grabbed, the right arm reaches toward the
@@ -1110,9 +1235,11 @@ function animateProductionAvatar(
     headX = -.05
     headY = 0
     headZ = 0
-    leftArmZ = -1.0
-    leftArmX = 0
-    rightArmZ = -.28
+    leftArmY = 0
+    rightArmY = 0
+    leftArmZ = 0
+    leftArmX = -1.15
+    rightArmZ = -.08
     rightArmX = -.95 - up * .38
     rightLowerArmZ = -.32 + up * .5
     rightHandX = up * .42
@@ -1134,14 +1261,24 @@ function animateProductionAvatar(
   dampBone(avatar.rig, 'neck', delta, { x: headX * .28, y: headY * .32, z: headZ * .28 }, 9)
   dampBone(avatar.rig, 'leftEye', delta, { x: eyeX, y: eyeY }, 14)
   dampBone(avatar.rig, 'rightEye', delta, { x: eyeX, y: eyeY }, 14)
+  dampBone(avatar.rig, 'hips', delta, { x: hipsX, z: hipsZ }, 9)
   dampBone(avatar.rig, 'upperChest', delta, { x: chestX, z: chestZ }, 8)
   dampBone(avatar.rig, 'chest', delta, { x: chestX * .52, z: chestZ * .52 }, 8)
   dampBone(avatar.rig, 'jaw', delta, { x: jawX }, 14)
-  dampBone(avatar.rig, 'leftUpperArm', delta, { x: leftArmX, z: leftArmZ }, 9)
-  dampBone(avatar.rig, 'rightUpperArm', delta, { x: rightArmX, z: rightArmZ }, 9)
+  dampBone(avatar.rig, 'leftUpperArm', delta, { x: leftArmX, y: leftArmY, z: leftArmZ }, 9)
+  dampBone(avatar.rig, 'rightUpperArm', delta, { x: rightArmX, y: rightArmY, z: rightArmZ }, 9)
   dampBone(avatar.rig, 'leftLowerArm', delta, { z: leftLowerArmZ }, 9)
   dampBone(avatar.rig, 'rightLowerArm', delta, { z: rightLowerArmZ }, 9)
+  dampBone(avatar.rig, 'leftHand', delta, { x: leftHandX }, 10)
   dampBone(avatar.rig, 'rightHand', delta, { x: rightHandX }, 10)
+  dampBone(avatar.rig, 'leftUpperLeg', delta, { x: leftUpperLegX, z: leftUpperLegZ }, 10)
+  dampBone(avatar.rig, 'rightUpperLeg', delta, { x: rightUpperLegX, z: rightUpperLegZ }, 10)
+  dampBone(avatar.rig, 'leftLowerLeg', delta, { x: leftLowerLegX }, 10)
+  dampBone(avatar.rig, 'rightLowerLeg', delta, { x: rightLowerLegX }, 10)
+  dampBone(avatar.rig, 'leftFoot', delta, { x: leftFootX, z: leftFootZ }, 11)
+  dampBone(avatar.rig, 'rightFoot', delta, { x: rightFootX, z: rightFootZ }, 11)
+  dampBone(avatar.rig, 'leftToes', delta, { x: leftToesX }, 12)
+  dampBone(avatar.rig, 'rightToes', delta, { x: rightToesX }, 12)
   driveSemanticFingers(avatar.rig, delta, fingerCurl, fingerOpen)
   const haloMat = avatar.halo.material as THREE.MeshBasicMaterial
   haloMat.opacity = damp(haloMat.opacity, haloOpacity, 7, delta)
