@@ -18,7 +18,7 @@ type Props = {
 
 const stateLabels: Record<MotionState, string> = {
   idle: '待机', wake: '唤醒', listen: '聆听', think: '思考', speak: '对话', social: '互聊', handshake: '握手',
-  dance: '跳舞', spin: '旋转', march: '高抬腿',
+  dance: '跳舞', spin: '旋转', march: '高抬腿', walk: '走动', return: '回来',
 }
 
 const stateEffects: Record<MotionState, { symbol: string; label: string }> = {
@@ -32,6 +32,8 @@ const stateEffects: Record<MotionState, { symbol: string; label: string }> = {
   dance: { symbol: '♪', label: '节拍律动' },
   spin: { symbol: '⟳', label: '原地旋转' },
   march: { symbol: '▵', label: '高抬腿小跑' },
+  walk: { symbol: '↝', label: '空间漫游' },
+  return: { symbol: '↩', label: '跑回默认位' },
 }
 
 const positions: Record<PetId, { left: string; width: string; handLeft: string; handTop: string }> = {

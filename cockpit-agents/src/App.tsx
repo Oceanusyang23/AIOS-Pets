@@ -121,6 +121,86 @@ const syncMessages: Message[] = [
 
 const quickPrompts = ['阿拓，原地高抬腿跑', '缪思，跳个舞', '米洛，转一圈']
 
+const atlasMotionSweep: MotionState[] = ['wake', 'listen', 'think', 'speak', 'social', 'handshake', 'dance', 'spin', 'march']
+
+const motionDisplayName: Record<MotionState, string> = {
+  idle: '待机',
+  wake: '唤醒',
+  listen: '聆听',
+  think: '思考',
+  speak: '对话',
+  social: '互聊',
+  handshake: '握手',
+  dance: '跳舞',
+  spin: '旋转',
+  march: '高抬腿',
+  walk: '走动',
+  return: '回来',
+}
+
+type RigDelta = {
+  id: AgentId
+  version: string
+  score: number
+  badge: string
+  geometry: string
+  expression: string
+  action: string
+  risk: string
+}
+
+const rigDeltas: RigDelta[] = [
+  {
+    id: 'atlas',
+    version: 'parts-v3',
+    score: 92,
+    badge: '已优化',
+    geometry: '5 mesh · 4 个面部安全拆件 · 不切洞',
+    expression: '7 个 facial morph · 眼/鼻/嘴可语义驱动',
+    action: '全动作接入：入场/招手/idle/聆听/对话/互聊/握手/跳舞/旋转/高抬腿',
+    risk: '当前风险较低：Eye/Jaw 错权重已清零，拆件使用 overlay 防破面漏光',
+  },
+  {
+    id: 'nova',
+    version: 'baseline rig',
+    score: 54,
+    badge: '待迁移',
+    geometry: '单体模型为主 · 未做面部安全拆件',
+    expression: '无独立 facial morph · 眼鼻嘴细节仍跟随整体头部',
+    action: '骨骼动作可跑，但表情和手部语义细节不足',
+    risk: '头颈/手部大幅动作时仍可能出现僵硬、穿模或局部变形',
+  },
+  {
+    id: 'muse',
+    version: 'baseline rig',
+    score: 52,
+    badge: '待迁移',
+    geometry: '单体模型为主 · 耳机/头发等附件未拆分校验',
+    expression: '无独立 facial morph · 音乐陶醉表情只能靠头身姿态模拟',
+    action: '跳舞/旋转可驱动，缺少眼睑、嘴角、头发附件的精细联动',
+    risk: '大幅摆头或舞蹈时附件与脸部关系仍需蒙皮重做',
+  },
+  {
+    id: 'milo',
+    version: 'baseline rig',
+    score: 50,
+    badge: '待迁移',
+    geometry: '单体模型为主 · 围裙/帽檐/杯子附件未拆分校验',
+    expression: '无独立 facial morph · 可爱眨眼/张嘴仍不够细腻',
+    action: '旋转/高抬腿可驱动，生活化小动作还偏机械',
+    risk: '帽檐、围裙边缘与手臂运动关系需要后续拆件和权重检查',
+  },
+]
+
+const actionCoverage = [
+  { label: '入场跑来', atlas: '脚步弹性 + 表情唤醒', baseline: '骨骼位移为主' },
+  { label: '招手 3s', atlas: '手臂 + 眨眼/微笑', baseline: '手臂动作，脸部静态' },
+  { label: 'Idle 随机', atlas: '眨眼/好奇/微笑 morph', baseline: '身体姿态循环' },
+  { label: '聆听/思考/对话', atlas: '嘴型/眯眼/好奇可混合', baseline: '头身动作模拟' },
+  { label: '握手跟随', atlas: '手部交互 + facial feedback', baseline: '手臂可跟随，反馈弱' },
+  { label: '跳舞/旋转/高抬腿', atlas: '动作 + 表情同步', baseline: '可执行但仍偏僵硬' },
+]
+
 const ttsProfiles: Record<AgentId, { rate: number; pitch: number; voiceSlot: number; preferred: string[] }> = {
   atlas: { rate: 1.08, pitch: 1.36, voiceSlot: 0, preferred: ['Xiaoyi', 'Xiaoxiao', 'Tingting', 'Meijia', 'Sinji'] },
   nova: { rate: 1.12, pitch: 1.18, voiceSlot: 1, preferred: ['Yunxi', 'Kangkang', 'Xiaoyi', 'Sinji', 'Tingting'] },
@@ -130,7 +210,7 @@ const ttsProfiles: Record<AgentId, { rate: number; pitch: number; voiceSlot: num
 
 type VoiceMotionCommand = {
   agentId: AgentId
-  motion: Extract<MotionState, 'dance' | 'spin' | 'march'>
+  motion: Extract<MotionState, 'dance' | 'spin' | 'march' | 'return'>
   label: string
   response: string
   duration: number
@@ -154,6 +234,15 @@ function parseVoiceMotionCommand(text: string, fallback: AgentId): VoiceMotionCo
   const lower = text.toLowerCase()
   const agentId = pickAgentFromText(text, fallback)
   const name = agents.find(agent => agent.id === agentId)?.name ?? '我'
+  if (/(回来|回來|归位|歸位|回到原位|回默认|回默认位置|come back|return|back)/i.test(lower)) {
+    return {
+      agentId: 'atlas',
+      motion: 'return',
+      label: '回来',
+      response: '阿拓收到，马上跑回来。',
+      duration: 3400,
+    }
+  }
   if (/(跳舞|跳个舞|dance|扭一扭|律动)/i.test(lower)) {
     return {
       agentId,
@@ -240,6 +329,7 @@ function App() {
   const [toast, setToast] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const timers = useRef<number[]>([])
+  const sweepTimers = useRef<number[]>([])
   const motionTimer = useRef<number | null>(null)
   const drawerDrag = useRef<{ x: number; opened: boolean } | null>(null)
   const recognitionRef = useRef<SpeechRecognizer | null>(null)
@@ -251,6 +341,7 @@ function App() {
 
   useEffect(() => () => {
     timers.current.forEach(window.clearTimeout)
+    sweepTimers.current.forEach(window.clearTimeout)
     if (motionTimer.current) window.clearTimeout(motionTimer.current)
     if (voiceRestartTimer.current) window.clearTimeout(voiceRestartTimer.current)
     if (voiceResponseTimer.current) window.clearTimeout(voiceResponseTimer.current)
@@ -280,6 +371,39 @@ function App() {
     } else {
       motionTimer.current = null
     }
+  }
+
+  const clearMotionSweep = () => {
+    sweepTimers.current.forEach(window.clearTimeout)
+    sweepTimers.current = []
+  }
+
+  const runAtlasMotionSweep = () => {
+    clearMotionSweep()
+    setPanel('harness')
+    setActiveId('atlas')
+    setSemantic({ energy: .82, valence: .78, certainty: .9 })
+    flash('阿拓 v3 全动作 sweep 开始：入场、聆听、思考、对话、互聊、握手、跳舞、旋转、高抬腿')
+
+    atlasMotionSweep.forEach((state, index) => {
+      const timer = window.setTimeout(() => {
+        transitionMotion(
+          state,
+          state === 'handshake' ? 1800 : 1500,
+          'idle',
+          'motion-lab',
+          'atlas',
+          { energy: state === 'think' ? .48 : .86, valence: state === 'listen' ? .74 : .82, certainty: .9 },
+        )
+      }, index * 1650)
+      sweepTimers.current.push(timer)
+    })
+
+    const doneTimer = window.setTimeout(() => {
+      transitionMotion('idle', undefined, 'idle', 'motion-lab', 'atlas', { energy: .45, valence: .72, certainty: .88 })
+      flash('阿拓 v3 sweep 完成：可在 trace 和差异面板查看动作覆盖')
+    }, atlasMotionSweep.length * 1650 + 500)
+    sweepTimers.current.push(doneTimer)
   }
 
   const selectAgent = (id: AgentId) => {
@@ -661,6 +785,47 @@ function App() {
                 <span>{signal}</span><b>{Math.round(semantic[signal] * 100)}</b>
                 <input aria-label={signal} type="range" min="0" max="100" value={semantic[signal] * 100} onChange={event => setSemantic(current => ({ ...current, [signal]: Number(event.target.value) / 100 }))} />
               </label>)}
+            </div>
+            <div className="ata-sweep-card">
+              <div>
+                <small>ATA V3 MOTION SWEEP</small>
+                <b>用优化后的阿拓跑完整动作链</b>
+                <span>{atlasMotionSweep.map(state => motionDisplayName[state]).join(' / ')}</span>
+              </div>
+              <button onClick={runAtlasMotionSweep}><Activity size={15} />开始 sweep</button>
+            </div>
+            <div className="rig-delta">
+              <header>
+                <div><small>RIG DELTA</small><b>阿拓 v3 与其他角色优化差距</b></div>
+                <span>QA BASELINE</span>
+              </header>
+              {rigDeltas.map(item => {
+                const agent = agents.find(candidate => candidate.id === item.id)!
+                return (
+                  <article key={item.id} className={`rig-delta-row ${item.id === 'atlas' ? 'optimized' : ''}`} style={{ '--delta': agent.color } as React.CSSProperties}>
+                    <div className="rig-score">
+                      <b>{item.score}</b><span>{item.badge}</span>
+                    </div>
+                    <div className="rig-copy">
+                      <div><strong>{agent.name}</strong><em>{item.version}</em></div>
+                      <p>{item.geometry}</p>
+                      <p>{item.expression}</p>
+                      <p>{item.action}</p>
+                      <small>{item.risk}</small>
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+            <div className="action-coverage">
+              <header><small>ACTION COVERAGE</small><b>同一动作下的优化差异</b></header>
+              {actionCoverage.map(item => (
+                <div key={item.label}>
+                  <span>{item.label}</span>
+                  <b>{item.atlas}</b>
+                  <em>{item.baseline}</em>
+                </div>
+              ))}
             </div>
             <label className={`model-gate ${modelReport ? (modelReport.valid ? 'valid' : 'invalid') : ''}`}>
               <input type="file" accept=".glb,model/gltf-binary" onChange={event => void handleModelFile(event.target.files?.[0])} />
