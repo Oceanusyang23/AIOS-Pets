@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import {
+  resolveCrowdPosition,
+  type CircleCollider,
+  type OrientedBoxCollider,
+  type StagePoint,
+} from './crowd-motion'
 import { hasProductionModel, petModelRegistry } from './model-registry'
 import './PetStage.css'
 
@@ -8,7 +14,7 @@ const GROUND_Y = -1.66
 const ATLAS_TARGET_HEIGHT = 3.82
 const AVATAR_TARGET_HEIGHT = 3.66
 
-export type MotionState = 'idle' | 'wake' | 'listen' | 'think' | 'speak' | 'social' | 'handshake' | 'dance' | 'spin' | 'march' | 'walk' | 'return'
+export type MotionState = 'idle' | 'wake' | 'listen' | 'think' | 'speak' | 'social' | 'handshake' | 'dance' | 'music' | 'spin' | 'march' | 'walk' | 'return'
 export type PetId = 'atlas' | 'muse' | 'milo' | 'nova'
 
 type PetInfo = {
@@ -71,13 +77,16 @@ type ProductionAvatar = {
   nextAccentAt: number
   introStartedAt: number
   introDelay: number
+  collisionRadius: number
   roam: RoamState
 }
 
 type RoamState = {
   active: boolean
   returning: boolean
+  holding: boolean
   nextWaypointAt: number
+  waypointIndex: number
   targetX: number
   targetZ: number
   heading: number
@@ -91,6 +100,16 @@ type LoadingAvatar = {
   startedAt: number
   completedAt: number | null
   phase: number
+}
+
+type StageVehicle = {
+  root: THREE.Group
+  collider: OrientedBoxCollider
+  startedAt: number
+  duration: number
+  fromX: number
+  toX: number
+  z: number
 }
 
 // Each avatar keeps one fixed idle "personality" (thematically matched to its role).
@@ -107,6 +126,34 @@ const idlePersonaByPet: Record<PetId, IdlePersona> = {
 // `accent >= 0` is the 0..1 progress of a periodic gesture (yawn / scratch);
 // continuous personas (music / pockets) always animate and pass accent = 1.
 type IdleAccent = { persona: IdlePersona; accent: number }
+
+type StoryGesture =
+  | 'routePoint'
+  | 'carCheck'
+  | 'musicInvite'
+  | 'shyNod'
+  | 'snackOffer'
+  | 'happyBounce'
+
+type StoryMotion = {
+  gesture: StoryGesture
+  partnerX: number
+  partnerZ: number
+  intensity: number
+}
+
+type StoryActor = {
+  destination: StagePoint
+  gesture: StoryGesture
+  partnerId: PetId
+}
+
+type StoryBeat = {
+  id: string
+  setup: string
+  caption: string
+  actors: Partial<Record<PetId, StoryActor>>
+}
 
 // Live handshake grab: arm tracks the pointer's vertical position in real time.
 type HandshakeGrab = { active: boolean; pointerY: number }
@@ -174,7 +221,7 @@ const facialMorphNames: FacialMorphName[] = [
 
 const stateLabels: Record<MotionState, string> = {
   idle: '待机', wake: '唤醒', listen: '聆听', think: '思考', speak: '对话', social: '互聊', handshake: '握手',
-  dance: '跳舞', spin: '旋转', march: '高抬腿', walk: '走动', return: '回来',
+  dance: '跳舞', music: '街舞', spin: '旋转', march: '高抬腿', walk: '走动', return: '回来',
 }
 
 const profiles: Record<PetId, Rig['profile']> = {
@@ -184,21 +231,246 @@ const profiles: Record<PetId, Rig['profile']> = {
   milo: { tempo: .88, amplitude: .72, openness: .86, attitude: .08 },
 }
 
-const roleBadgeMeta: Record<PetId, { symbol: string; title: string; x: string }> = {
-  atlas: { symbol: '⌖', title: 'Navigation / Travel Agent', x: '13.4%' },
-  nova: { symbol: '◴', title: 'Car Control Agent', x: '38.3%' },
-  muse: { symbol: '▶', title: 'Music & Video Agent', x: '63.2%' },
-  milo: { symbol: '♨', title: 'Food Service Agent', x: '86.5%' },
+type RoamProfile = {
+  startDelay: number
+  speed: number
+  returnSpeed: number
+  turnRate: number
+  returnTurnRate: number
+  maxTurnStep: number
+  stepDistance: number
+  gaitSeconds: number
+  stride: number
+  sway: number
+  waypoints: StagePoint[]
+}
+
+const roamProfiles: Record<PetId, RoamProfile> = {
+  atlas: {
+    startDelay: 20,
+    speed: .46,
+    returnSpeed: 1.95,
+    turnRate: .82,
+    returnTurnRate: 1.35,
+    maxTurnStep: Math.PI / 4,
+    stepDistance: .92,
+    gaitSeconds: 1.667,
+    stride: 1,
+    sway: .9,
+    waypoints: [
+      { x: -.85, z: .72 },
+      { x: -1.65, z: 1.35 },
+      { x: -2.28, z: 1.9 },
+      { x: -1.15, z: 1.62 },
+      { x: -.35, z: 1.02 },
+    ],
+  },
+  nova: {
+    startDelay: 24,
+    speed: .5,
+    returnSpeed: 2,
+    turnRate: .88,
+    returnTurnRate: 1.4,
+    maxTurnStep: Math.PI / 4,
+    stepDistance: .86,
+    gaitSeconds: 1.5,
+    stride: .9,
+    sway: .72,
+    waypoints: [
+      { x: -.58, z: .82 },
+      { x: -1.1, z: 1.48 },
+      { x: -.45, z: 2.04 },
+      { x: .62, z: 1.58 },
+      { x: .82, z: .92 },
+    ],
+  },
+  muse: {
+    startDelay: 28,
+    speed: .44,
+    returnSpeed: 1.9,
+    turnRate: .8,
+    returnTurnRate: 1.32,
+    maxTurnStep: Math.PI / 4,
+    stepDistance: .82,
+    gaitSeconds: 1.76,
+    stride: .92,
+    sway: 1.18,
+    waypoints: [
+      { x: .46, z: .86 },
+      { x: 1.16, z: 1.48 },
+      { x: .66, z: 2.08 },
+      { x: -.46, z: 1.62 },
+      { x: -.62, z: 1.02 },
+    ],
+  },
+  milo: {
+    startDelay: 32,
+    speed: .4,
+    returnSpeed: 1.82,
+    turnRate: .74,
+    returnTurnRate: 1.26,
+    maxTurnStep: Math.PI / 4,
+    stepDistance: .76,
+    gaitSeconds: 1.9,
+    stride: .82,
+    sway: 1.05,
+    waypoints: [
+      { x: .55, z: .78 },
+      { x: 1.34, z: 1.38 },
+      { x: 1.86, z: 1.96 },
+      { x: .72, z: 2.08 },
+      { x: -.42, z: 1.35 },
+    ],
+  },
+}
+
+const STORY_START_DELAY = 18
+const STORY_BEAT_DURATION = 20
+const STORY_APPROACH_END = 6.5
+const STORY_PERFORM_END = 15
+
+const storyBeats: StoryBeat[] = [
+  {
+    id: 'route-check',
+    setup: '冷开场：阿拓把今晚路线排得像考试计划，诺瓦觉得他过度紧张。',
+    caption: '阿拓坚持“提前 12 分钟才浪漫”，诺瓦嘴上嫌弃，还是默默帮他检查车况。',
+    actors: {
+      atlas: { destination: { x: -3.95, z: 1.22 }, gesture: 'routePoint', partnerId: 'nova' },
+      nova: { destination: { x: -1.2, z: 1.18 }, gesture: 'carCheck', partnerId: 'atlas' },
+    },
+  },
+  {
+    id: 'music-truce',
+    setup: '缪思想用一首歌改变车内气氛，诺瓦说“安全优先，不要情绪驾驶”。',
+    caption: '缪思把副歌调低一点；诺瓦嘴上说只听十秒，脚尖却开始悄悄打拍子。',
+    actors: {
+      muse: { destination: { x: 1.25, z: 1.15 }, gesture: 'musicInvite', partnerId: 'nova' },
+      nova: { destination: { x: -1.25, z: 1.18 }, gesture: 'shyNod', partnerId: 'muse' },
+    },
+  },
+  {
+    id: 'snack-break',
+    setup: '米洛说“顺路”其实绕了 14 分钟，阿拓差点把路线尺拿出来。',
+    caption: '米洛递出隐藏菜单点心，阿拓叹气，但还是把它加入“必要补给点”。',
+    actors: {
+      milo: { destination: { x: 3.75, z: 1.12 }, gesture: 'snackOffer', partnerId: 'atlas' },
+      atlas: { destination: { x: .75, z: 1.22 }, gesture: 'happyBounce', partnerId: 'milo' },
+    },
+  },
+  {
+    id: 'support-circle',
+    setup: '小争吵后，缪思突然有点低落：她担心自己只是“车里的背景音乐”。',
+    caption: '诺瓦难得认真夸她：好的声音不是打扰，是让大家愿意继续出发的理由。',
+    actors: {
+      nova: { destination: { x: -2.18, z: 1.08 }, gesture: 'shyNod', partnerId: 'muse' },
+      muse: { destination: { x: .15, z: 1.2 }, gesture: 'musicInvite', partnerId: 'nova' },
+      milo: { destination: { x: 2.65, z: 1.16 }, gesture: 'snackOffer', partnerId: 'muse' },
+    },
+  },
+  {
+    id: 'departure-cheer',
+    setup: '结尾标签：四位伙伴把争论变成了一个更好的今晚计划。',
+    caption: '路线、安全、歌单和零食全部就位——他们不是系统模块，是一群会互相兜底的朋友。',
+    actors: {
+      atlas: { destination: { x: -4.55, z: 1.24 }, gesture: 'routePoint', partnerId: 'nova' },
+      nova: { destination: { x: -1.5, z: 1.1 }, gesture: 'shyNod', partnerId: 'atlas' },
+      muse: { destination: { x: 1.5, z: 1.1 }, gesture: 'musicInvite', partnerId: 'milo' },
+      milo: { destination: { x: 4.55, z: 1.24 }, gesture: 'snackOffer', partnerId: 'muse' },
+    },
+  },
+]
+
+const musicStageFormation: Record<PetId, StagePoint> = {
+  atlas: { x: -4.72, z: 1.28 },
+  nova: { x: -1.7, z: 1.04 },
+  muse: { x: 1.7, z: 1.04 },
+  milo: { x: 4.72, z: 1.28 },
+}
+
+const roleBadgeMeta: Record<PetId, { title: string; x: string }> = {
+  atlas: { title: 'Navigation / Travel Agent', x: '13.4%' },
+  nova: { title: 'Car Control Agent', x: '38.3%' },
+  muse: { title: 'Music & Video Agent', x: '63.2%' },
+  milo: { title: 'Food Service Agent', x: '86.5%' },
+}
+
+function RoleBadgeIcon({ id }: { id: PetId }) {
+  if (id === 'atlas') {
+    return (
+      <svg className="role-icon role-icon-atlas" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3.5v17" />
+        <path d="M3.5 12h17" />
+        <circle cx="12" cy="12" r="4.15" />
+        <circle cx="12" cy="12" r="1.25" fill="currentColor" stroke="none" />
+      </svg>
+    )
+  }
+  if (id === 'nova') {
+    return (
+      <svg className="role-icon role-icon-nova" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M6.4 17.2a7.35 7.35 0 1 1 11.2 0" />
+        <path d="M12 6.2v3.7" />
+        <path d="M16.9 9.05 14.45 11.5" />
+        <circle cx="12" cy="14.15" r="3.65" />
+        <path d="M12 14.15h-3.1" />
+      </svg>
+    )
+  }
+  if (id === 'muse') {
+    return (
+      <svg className="role-icon role-icon-muse" viewBox="0 0 24 24" aria-hidden="true">
+        <path className="role-icon-fill" d="M8.35 5.55v12.9c0 .82.9 1.32 1.6.88l9.55-6.38a1.08 1.08 0 0 0 0-1.8L9.95 4.77c-.7-.47-1.6.02-1.6.78Z" />
+      </svg>
+    )
+  }
+  return (
+    <svg className="role-icon role-icon-milo" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7.4 13.4c-1.2 1.15-1.65 2.78-.82 4.05.9 1.38 2.95 2.05 5.42 2.05s4.52-.67 5.42-2.05c.83-1.27.38-2.9-.82-4.05" />
+      <path d="M9 4.5c-1.9 2 .85 3.15-.28 5.15" />
+      <path d="M12 3.85c-2.1 2.28 1.2 3.55-.2 5.9" />
+      <path d="M15.05 4.5c-1.9 2 .85 3.15-.28 5.15" />
+    </svg>
+  )
 }
 
 const INTRO_RUN_DURATION = 2.4
 const INTRO_WAVE_DURATION = 3
+const PORSCHE_MODEL_URL = '/models/911_dakar_50k.glb?v=20260626-911-dakar'
+const STAGE_VEHICLE_X = .38
+const STAGE_VEHICLE_Z = -6.35
+const STAGE_VEHICLE_YAW = -.5
+const STAGE_VEHICLE_VISUAL_YAW = STAGE_VEHICLE_YAW + Math.PI
+const STAGE_VEHICLE_LENGTH = 11.3
+const STAGE_VEHICLE_COLLIDER = {
+  x: STAGE_VEHICLE_X,
+  z: STAGE_VEHICLE_Z,
+  yaw: STAGE_VEHICLE_YAW,
+  halfX: 5.9,
+  halfZ: 1.95,
+}
+const STAGE_ROAM_BOUNDS = {
+  minX: -6.35,
+  maxX: 6.35,
+  minZ: -7.65,
+  maxZ: 2.35,
+}
+const CAMERA_ORBIT_YAW_LIMIT = .42
+const CAMERA_ORBIT_PITCH_LIMIT = .24
+const CAMERA_ORBIT_SENSITIVITY = .0032
 
 const easeOutCubic = (value: number) => 1 - Math.pow(1 - THREE.MathUtils.clamp(value, 0, 1), 3)
 const easeInOutSine = (value: number) => -(Math.cos(Math.PI * THREE.MathUtils.clamp(value, 0, 1)) - 1) / 2
 
 const damp = (current: number, target: number, lambda: number, delta: number) =>
   THREE.MathUtils.damp(current, target, lambda, delta)
+
+const normalizeAngle = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle))
+
+const clampHeadingStep = (current: number, target: number, maxStep = Math.PI / 4) =>
+  current + THREE.MathUtils.clamp(normalizeAngle(target - current), -maxStep, maxStep)
+
+const rotateTowardsAngle = (current: number, target: number, maxDelta: number) =>
+  current + THREE.MathUtils.clamp(normalizeAngle(target - current), -maxDelta, maxDelta)
 
 function material(color: string, roughness = .72) {
   return new THREE.MeshStandardMaterial({ color, roughness, metalness: .08 })
@@ -225,6 +497,24 @@ function tag(meshItem: THREE.Object3D, id: PetId, bodyPart: string) {
     child.userData.agentId = id
     child.userData.bodyPart = bodyPart
   })
+}
+
+function createContactShadow(
+  color = '#5f6878',
+  opacity = .18,
+  scale: [number, number, number] = [1, .32, 1],
+) {
+  const shadow = mesh(
+    new THREE.CircleGeometry(1, 80),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false }),
+    [0, .012, 0],
+    scale,
+  )
+  shadow.rotation.x = -Math.PI / 2
+  shadow.castShadow = false
+  shadow.receiveShadow = false
+  shadow.renderOrder = -2
+  return shadow
 }
 
 function createArm(id: PetId, side: 'left' | 'right', cloth: THREE.Material, skin: THREE.Material) {
@@ -271,7 +561,9 @@ function createPet(info: PetInfo, index: number): Rig {
 
   const halo = mesh(new THREE.RingGeometry(.82, .86, 48), new THREE.MeshBasicMaterial({ color: info.color, transparent: true, opacity: .1, side: THREE.DoubleSide }), [0, .08, -.35], [1.3, .42, 1])
   halo.rotation.x = -Math.PI / 2
-  root.add(halo)
+  halo.visible = false
+  const contactShadow = createContactShadow('#566170', .16, [1.18, .34, 1])
+  root.add(contactShadow, halo)
 
   const legs = new THREE.Group()
   root.add(legs)
@@ -518,9 +810,9 @@ function stabilizeAvatarMaterials(root: THREE.Object3D, preservePbr = false) {
         material.roughnessMap = null
         material.metalnessMap = null
       }
-      material.roughness = .68
-      material.metalness = .03
-      material.envMapIntensity = .45
+      material.roughness = preservePbr ? Math.min(material.roughness, .56) : .68
+      material.metalness = preservePbr ? material.metalness : .03
+      material.envMapIntensity = preservePbr ? .82 : .45
       material.needsUpdate = true
     })
   })
@@ -821,6 +1113,11 @@ function prepareProductionAvatar(gltfScene: THREE.Group, fallback: Rig, agent: P
   box.getCenter(center)
   const targetHeight = agent.id === 'atlas' ? ATLAS_TARGET_HEIGHT : AVATAR_TARGET_HEIGHT
   const scale = targetHeight / Math.max(size.y, .001)
+  const collisionRadius = THREE.MathUtils.clamp(
+    Math.max(size.x, size.z) * scale * .5 + .16,
+    .92,
+    1.68,
+  )
   gltfScene.scale.setScalar(scale)
   gltfScene.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale)
   gltfScene.rotation.y = 0
@@ -846,12 +1143,14 @@ function prepareProductionAvatar(gltfScene: THREE.Group, fallback: Rig, agent: P
 
   const halo = mesh(
     new THREE.RingGeometry(1.02, 1.08, 64),
-    new THREE.MeshBasicMaterial({ color: agent.color, transparent: true, opacity: .16, side: THREE.DoubleSide }),
+    new THREE.MeshBasicMaterial({ color: agent.color, transparent: true, opacity: 0, side: THREE.DoubleSide }),
     [0, .05, -.42],
     [1.24, .44, 1],
   )
   halo.rotation.x = -Math.PI / 2
-  wrapper.add(halo, gltfScene)
+  halo.visible = false
+  const contactShadow = createContactShadow('#4e5969', agent.id === 'atlas' ? .18 : .16, [1.05, .32, 1])
+  wrapper.add(contactShadow, halo, gltfScene)
 
   const handHit = mesh(
     new THREE.SphereGeometry(.42, 18, 12),
@@ -879,10 +1178,13 @@ function prepareProductionAvatar(gltfScene: THREE.Group, fallback: Rig, agent: P
     nextAccentAt: introStartedAt + introDelay + INTRO_RUN_DURATION + INTRO_WAVE_DURATION + 1.6 + Math.random() * 3.5,
     introStartedAt,
     introDelay,
+    collisionRadius,
     roam: {
       active: false,
       returning: false,
+      holding: false,
       nextWaypointAt: 0,
+      waypointIndex: 0,
       targetX: fallback.baseX + (agent.id === 'atlas' ? -.08 : 0),
       targetZ: 0,
       heading: 0,
@@ -890,12 +1192,107 @@ function prepareProductionAvatar(gltfScene: THREE.Group, fallback: Rig, agent: P
   }
 }
 
+function prepareStageVehicle(gltfScene: THREE.Group, startedAt: number): StageVehicle {
+  const root = new THREE.Group()
+  root.name = '911_Dakar_StageVehicle'
+  gltfScene.name = '911_Dakar_Model'
+  gltfScene.updateMatrixWorld(true)
+  const rawBox = new THREE.Box3().setFromObject(gltfScene)
+  const rawSize = new THREE.Vector3()
+  rawBox.getSize(rawSize)
+  if (rawSize.z > rawSize.x * 1.22) gltfScene.rotation.y = Math.PI / 2
+  gltfScene.updateMatrixWorld(true)
+  const orientedBox = new THREE.Box3().setFromObject(gltfScene)
+  const orientedSize = new THREE.Vector3()
+  orientedBox.getSize(orientedSize)
+  const targetLength = STAGE_VEHICLE_LENGTH
+  const longestSide = Math.max(orientedSize.x, orientedSize.z, .001)
+  gltfScene.scale.setScalar(targetLength / longestSide)
+  gltfScene.updateMatrixWorld(true)
+  const scaledBox = new THREE.Box3().setFromObject(gltfScene)
+  const scaledSize = new THREE.Vector3()
+  const center = new THREE.Vector3()
+  scaledBox.getSize(scaledSize)
+  scaledBox.getCenter(center)
+  gltfScene.position.x -= center.x
+  gltfScene.position.y += GROUND_Y - scaledBox.min.y
+  gltfScene.position.z -= center.z
+  gltfScene.traverse(object => {
+    if (object instanceof THREE.Mesh) {
+      object.castShadow = true
+      object.receiveShadow = true
+      const materials = Array.isArray(object.material) ? object.material : [object.material]
+      materials.forEach(mat => {
+        mat.transparent = false
+        mat.opacity = 1
+        mat.depthWrite = true
+        mat.depthTest = true
+        if (mat instanceof THREE.MeshStandardMaterial || mat instanceof THREE.MeshPhysicalMaterial) {
+          if (mat.map) {
+            mat.map.colorSpace = THREE.SRGBColorSpace
+            mat.map.needsUpdate = true
+          }
+          mat.roughness = THREE.MathUtils.clamp(mat.roughness, .38, .58)
+          mat.metalness = Math.max(mat.metalness, .12)
+          mat.envMapIntensity = 1.05
+        }
+        mat.needsUpdate = true
+      })
+    }
+  })
+  const vehicleShadow = createContactShadow('#253044', .22, [6.25, 1.32, 1])
+  vehicleShadow.position.z = .05
+  root.add(vehicleShadow, gltfScene)
+  root.position.set(10.8, 0, STAGE_VEHICLE_Z)
+  root.rotation.y = STAGE_VEHICLE_VISUAL_YAW
+  root.visible = false
+  return {
+    root,
+    collider: {
+      x: STAGE_VEHICLE_X,
+      z: STAGE_VEHICLE_Z,
+      yaw: STAGE_VEHICLE_VISUAL_YAW,
+      halfX: scaledSize.x * .5 + .42,
+      halfZ: scaledSize.z * .5 + .48,
+    },
+    startedAt,
+    duration: 3.6,
+    fromX: 10.8,
+    toX: STAGE_VEHICLE_X,
+    z: STAGE_VEHICLE_Z,
+  }
+}
+
+function animateStageVehicle(vehicle: StageVehicle, elapsed: number, delta: number) {
+  const localTime = elapsed - vehicle.startedAt
+  if (localTime < 0) {
+    vehicle.root.visible = false
+    return
+  }
+  vehicle.root.visible = true
+  const progress = THREE.MathUtils.clamp(localTime / vehicle.duration, 0, 1)
+  const eased = easeOutCubic(progress)
+  const settle = THREE.MathUtils.smoothstep(progress, .76, 1)
+  const drivePulse = Math.sin(localTime * 10.5) * (1 - settle)
+  vehicle.root.position.x = THREE.MathUtils.lerp(vehicle.fromX, vehicle.toX, eased)
+  vehicle.root.position.z = vehicle.z
+  vehicle.root.position.y = Math.abs(drivePulse) * .012
+  vehicle.root.rotation.z = damp(vehicle.root.rotation.z, drivePulse * .004, 8, delta)
+  vehicle.root.rotation.y = damp(vehicle.root.rotation.y, STAGE_VEHICLE_VISUAL_YAW, 7, delta)
+}
+
 type RoamMotion = {
   active: boolean
   returning: boolean
+  holding: boolean
   targetX: number
   targetZ: number
   heading: number
+  speed: number
+  returnSpeed: number
+  turnRate: number
+  returnTurnRate: number
+  resolvePosition: (point: StagePoint) => StagePoint
 }
 
 function animateProductionAvatar(
@@ -909,6 +1306,7 @@ function animateProductionAvatar(
   idleAccent: IdleAccent | null,
   handshake: HandshakeGrab | null,
   roam: RoamMotion | null,
+  story: StoryMotion | null,
 ) {
   const t = elapsed * .8 + avatar.phase
   const breath = Math.sin(t * 1.35) * .025
@@ -1143,6 +1541,110 @@ function animateProductionAvatar(
     morphSmile += .22
     morphCurious += .2
   }
+  if (state === 'social' && story) {
+    const pulse = Math.sin(elapsed * 4.2 + avatar.phase)
+    const softPulse = Math.sin(elapsed * 2.15 + avatar.phase)
+    const storyHeading = Math.atan2(
+      story.partnerX - avatar.root.position.x,
+      story.partnerZ - avatar.root.position.z,
+    )
+    rootRotY = storyHeading
+    headY = softPulse * .035
+    eyeY = softPulse * .018
+    morphSmile += .22 * story.intensity
+    morphCurious += .18 * story.intensity
+
+    if (story.gesture === 'routePoint') {
+      rootRotX = .035
+      chestZ += -.035
+      headX = -.055 + softPulse * .018
+      rightArmX = -.34 + pulse * .045
+      rightArmZ = -.42
+      rightLowerArmZ = -.26
+      rightHandX = -.08
+      leftArmX = -1.2
+      fingerOpen = .78
+      fingerCurl = .04
+      morphMouthOpen += .16 + Math.abs(pulse) * .18
+    }
+    if (story.gesture === 'carCheck') {
+      const scan = Math.sin(elapsed * 1.35 + avatar.phase)
+      rootRotX = .07
+      modelRotX = -.045
+      headX = -.1 + Math.max(0, softPulse) * .035
+      headY += scan * .2
+      rightArmX = -.62
+      rightArmZ = -.12
+      rightLowerArmZ = -.5
+      rightHandX = -.12 + pulse * .03
+      leftArmX = -1.28
+      morphSquint += .35
+      morphSmile += .08
+      fingerCurl = .26
+    }
+    if (story.gesture === 'musicInvite') {
+      const beat = Math.sin(elapsed * 5.4 + avatar.phase)
+      rootY += Math.max(0, beat) * .032
+      rootRotZ += softPulse * .035
+      modelRotZ += softPulse * .025
+      headZ += softPulse * .11
+      leftArmX = -.18
+      leftArmZ = .18
+      leftLowerArmZ = .52
+      rightArmX = -.48 + beat * .08
+      rightArmZ = -.38
+      rightLowerArmZ = -.24
+      fingerOpen = .72
+      morphBlink += Math.max(0, beat) * .12
+      morphSmile += .36
+    }
+    if (story.gesture === 'shyNod') {
+      const nod = Math.max(0, Math.sin(elapsed * 3.1 + avatar.phase))
+      rootY += Math.max(0, pulse) * .012
+      headX = -.04 + nod * .09
+      headZ += softPulse * .025
+      chestX += nod * .018
+      leftArmX = -1.28
+      rightArmX = -1.28
+      leftFootX += Math.max(0, pulse) * .08
+      morphSquint += nod * .12
+      morphSmile += .28
+    }
+    if (story.gesture === 'snackOffer') {
+      const offer = .7 + Math.max(0, softPulse) * .2
+      rootRotX = .055
+      rootY += Math.max(0, pulse) * .02
+      headX = -.075
+      leftArmX = -.56
+      rightArmX = -.56
+      leftArmZ = -.28
+      rightArmZ = .28
+      leftLowerArmZ = -.42 * offer
+      rightLowerArmZ = .42 * offer
+      leftHandX = -.12
+      rightHandX = -.12
+      fingerCurl = .22
+      fingerOpen = .35
+      morphMouthOpen += .12 + Math.max(0, pulse) * .12
+      morphSmile += .38
+    }
+    if (story.gesture === 'happyBounce') {
+      const bounce = Math.max(0, Math.sin(elapsed * 5.8 + avatar.phase))
+      rootY += bounce * .055
+      rootRotZ += softPulse * .04
+      headZ += -softPulse * .085
+      leftArmX = -.48 + bounce * .12
+      rightArmX = -.48 + bounce * .12
+      leftArmZ = -.24
+      rightArmZ = .24
+      leftLowerArmZ = -.58
+      rightLowerArmZ = .58
+      fingerOpen = .58
+      morphBlink += bounce * .12
+      morphSmile += .42
+      morphMouthOpen += bounce * .16
+    }
+  }
   if (state === 'handshake') {
     const shake = Math.sin(elapsed * 12) * .04
     rootRotX = .065
@@ -1163,6 +1665,109 @@ function animateProductionAvatar(
     fingerOpen = .08
     morphSmile += .28
     morphCurious += .22
+  }
+
+  if (state === 'music') {
+    // Group street-dance mode: shared 8-count phrase with role-specific
+    // accents, so the agents feel choreographed instead of each doing the
+    // same loop. Kept bone angles plush and toy-safe to avoid mesh tearing.
+    const stageIndex = avatar.id === 'atlas' ? 0 : avatar.id === 'nova' ? 1 : avatar.id === 'muse' ? 2 : 3
+    const phrase = elapsed * (Math.PI * 2 / 1.08) + stageIndex * .54
+    const eight = elapsed * (Math.PI * 2 / 4.32)
+    const beat = Math.sin(phrase)
+    const beat2 = Math.sin(phrase * 2)
+    const hit = Math.max(0, Math.sin(phrase * 2.0)) ** 1.18
+    const wave = Math.sin(eight + stageIndex * .82)
+    const cross = Math.sin(eight * .5 + stageIndex * 1.15)
+    const leftStep = Math.max(0, Math.sin(phrase + stageIndex * .3)) ** .9
+    const rightStep = Math.max(0, -Math.sin(phrase + stageIndex * .3)) ** .9
+    const cannon = Math.max(0, Math.sin(eight * 2 - stageIndex * .62)) ** 1.7
+    rootY += .035 + hit * .07
+    rootRotX = -.035 + hit * .035
+    rootRotY = Math.sin(eight * .5 + stageIndex) * .18
+    rootRotZ += beat * .075 + wave * .045
+    modelRotX += -.045 + hit * .035
+    modelRotZ += beat * .07
+    scale = 1.025 + hit * .022
+    haloOpacity = .7 + cannon * .12
+    hipsX += hit * .025
+    hipsZ += -beat * .12 + wave * .06
+    chestX += .06 + hit * .045
+    chestZ += beat * .12 + cross * .05
+    headX += -.035 + hit * .045
+    headY += -cross * .22 + lookTargetX * .05
+    headZ += -beat * .12 + wave * .06
+    leftArmY = 0
+    rightArmY = 0
+    leftArmX = -1.02 + leftStep * .36 - cannon * .2
+    rightArmX = -1.02 + rightStep * .36 - cannon * .2
+    leftArmZ = -.26 + beat * .16 - wave * .18
+    rightArmZ = .26 + beat * .16 + wave * .18
+    leftLowerArmX = -.18 - leftStep * .22 + cannon * .16
+    rightLowerArmX = -.18 - rightStep * .22 + cannon * .16
+    leftLowerArmZ = -.4 - beat2 * .16 - cannon * .18
+    rightLowerArmZ = .4 + beat2 * .16 + cannon * .18
+    leftHandX = Math.sin(phrase * 2.2 + stageIndex) * .08
+    rightHandX = Math.sin(phrase * 2.2 + stageIndex + Math.PI) * .08
+    leftUpperLegX = -.28 * leftStep + .13 * rightStep + hit * .04
+    rightUpperLegX = -.28 * rightStep + .13 * leftStep + hit * .04
+    leftUpperLegZ = -.06 - leftStep * .06 + wave * .02
+    rightUpperLegZ = .06 + rightStep * .06 + wave * .02
+    leftLowerLegX = .55 * leftStep - .18 * rightStep + cannon * .12
+    rightLowerLegX = .55 * rightStep - .18 * leftStep + cannon * .12
+    leftFootX = -.27 * leftStep + .08 * rightStep
+    rightFootX = -.27 * rightStep + .08 * leftStep
+    leftFootZ = -.09 + leftStep * .04
+    rightFootZ = .09 - rightStep * .04
+    leftToesX = .25 * leftStep + hit * .06
+    rightToesX = .25 * rightStep + hit * .06
+    jawX += .035 + hit * .05
+    eyeX = -.045 + cannon * .02
+    eyeY = cross * .08
+    fingerCurl = .05 + hit * .1
+    fingerOpen = .76 + cannon * .18
+    morphMouthOpen += .2 + hit * .36
+    morphSmile += .55 + cannon * .16
+    morphSquint += .2 + hit * .12
+    morphCurious += .14 + cannon * .28
+
+    if (avatar.id === 'atlas') {
+      // Leader: crisp route-master points and chest pops.
+      rightArmX += .22 + cannon * .32
+      rightArmZ += -.3 - cannon * .2
+      rightLowerArmZ += -.35 - cannon * .18
+      leftArmX += hit * .12
+      headY += -.16 + cannon * .12
+      chestZ += hit * .08
+    } else if (avatar.id === 'nova') {
+      // Power/popping: grounded shoulders and compact punches.
+      rootY += cannon * .025
+      rootRotZ += -wave * .04
+      leftArmX += cannon * .28
+      rightArmX += cannon * .28
+      leftLowerArmZ += -.18
+      rightLowerArmZ += .18
+      morphSquint += .18
+    } else if (avatar.id === 'muse') {
+      // Wave/body roll: musical upper-body snake and headphone groove.
+      headZ += Math.sin(eight * 2.2) * .12
+      chestZ += Math.sin(eight * 2.2 - .7) * .18
+      leftArmX += .32 * Math.max(0, wave)
+      rightArmX += .32 * Math.max(0, -wave)
+      leftLowerArmZ += wave * .32
+      rightLowerArmZ += wave * .32
+      morphBlink += Math.max(0, beat) * .18
+    } else {
+      // Milo: cute hype-man bounce with two-hand cheer hits.
+      rootY += hit * .045
+      leftArmX += .24 + cannon * .22
+      rightArmX += .24 + cannon * .22
+      leftArmZ -= .18
+      rightArmZ += .18
+      leftLowerArmZ -= .22
+      rightLowerArmZ += .22
+      morphMouthOpen += cannon * .22
+    }
   }
 
   if (state === 'dance') {
@@ -1233,28 +1838,31 @@ function animateProductionAvatar(
     // Mesh2Motion Walk_Loop reference: 1.667s cycle, moderate thigh/calf
     // rotation, small pelvis travel, light wrist swing. This is used for
     // autonomous roaming so Ata feels alive without looking like he is jogging.
-    const cycle = elapsed * (Math.PI * 2 / 1.667) + avatar.phase
+    const walkProfile = roamProfiles[avatar.id]
+    const cycle = elapsed * (Math.PI * 2 / walkProfile.gaitSeconds) + avatar.phase
     const step = Math.sin(cycle)
     const leftStep = Math.max(0, step) ** .82
     const rightStep = Math.max(0, -step) ** .82
     const heel = Math.abs(Math.cos(cycle)) ** 2.15
-    rootY += heel * .026 + Math.max(leftStep, rightStep) * .022
+    const strideScale = walkProfile.stride
+    const swayScale = walkProfile.sway
+    rootY += (heel * .026 + Math.max(leftStep, rightStep) * .022) * strideScale
     rootRotX = .035
     rootRotY = (roam?.heading ?? rootRotY) + step * .025
-    rootRotZ += step * .025
+    rootRotZ += step * .025 * swayScale
     modelRotX = -.028
-    modelRotZ += step * .014
+    modelRotZ += step * .014 * swayScale
     hipsX += heel * .012
-    hipsZ += -step * .032
+    hipsZ += -step * .032 * swayScale
     chestX += .025 + heel * .012
-    chestZ += step * .025
+    chestZ += step * .025 * swayScale
     headX += -.035 + heel * .012
-    headY += -step * .055
-    headZ += -step * .026
+    headY += -step * .055 * swayScale
+    headZ += -step * .026 * swayScale
     leftArmY = 0
     rightArmY = 0
-    leftArmX = -1.17 - step * .11
-    rightArmX = -1.17 + step * .11
+    leftArmX = -1.17 - step * .11 * strideScale
+    rightArmX = -1.17 + step * .11 * strideScale
     leftArmZ = -.13 + step * .06
     rightArmZ = .13 + step * .06
     leftLowerArmX = -.22 - rightStep * .08
@@ -1263,14 +1871,14 @@ function animateProductionAvatar(
     rightLowerArmZ = .32 + leftStep * .1
     leftHandX = Math.sin(cycle + .8) * .045
     rightHandX = Math.sin(cycle + Math.PI + .8) * .045
-    leftUpperLegX = -.44 * leftStep + .16 * rightStep
-    rightUpperLegX = -.44 * rightStep + .16 * leftStep
+    leftUpperLegX = (-.44 * leftStep + .16 * rightStep) * strideScale
+    rightUpperLegX = (-.44 * rightStep + .16 * leftStep) * strideScale
     leftUpperLegZ = -.025 - leftStep * .035
     rightUpperLegZ = .025 + rightStep * .035
-    leftLowerLegX = .62 * leftStep - .18 * rightStep
-    rightLowerLegX = .62 * rightStep - .18 * leftStep
-    leftFootX = -.28 * leftStep + .08 * rightStep
-    rightFootX = -.28 * rightStep + .08 * leftStep
+    leftLowerLegX = (.62 * leftStep - .18 * rightStep) * strideScale
+    rightLowerLegX = (.62 * rightStep - .18 * leftStep) * strideScale
+    leftFootX = (-.28 * leftStep + .08 * rightStep) * strideScale
+    rightFootX = (-.28 * rightStep + .08 * leftStep) * strideScale
     leftFootZ = -.04 + leftStep * .018
     rightFootZ = .04 - rightStep * .018
     leftToesX = .22 * leftStep + heel * .03
@@ -1525,16 +2133,33 @@ function animateProductionAvatar(
     face_listen_curious: morphCurious,
   }, 13)
 
-  if (roam?.active || roam?.returning) {
+  if (roam?.active || roam?.returning || roam?.holding) {
     rootX = roam.targetX
     rootZ = roam.targetZ
+    const dx = rootX - avatar.root.position.x
+    const dz = rootZ - avatar.root.position.z
+    const distance = Math.hypot(dx, dz)
+    const speed = roam.returning ? roam.returnSpeed : roam.active ? roam.speed : 0
+    if (speed > 0 && distance > .002) {
+      const step = Math.min(distance, speed * delta)
+      const nextX = avatar.root.position.x + (dx / distance) * step
+      const nextZ = avatar.root.position.z + (dz / distance) * step
+      const safePosition = roam.resolvePosition({ x: nextX, z: nextZ })
+      avatar.root.position.x = safePosition.x
+      avatar.root.position.z = safePosition.z
+    }
+  } else {
+    avatar.root.position.x = damp(avatar.root.position.x, rootX, 8, delta)
+    avatar.root.position.z = damp(avatar.root.position.z, rootZ, intro.kind === 'run' ? 5 : 8, delta)
   }
-
-  avatar.root.position.x = damp(avatar.root.position.x, rootX, roam?.active || roam?.returning ? 2.2 : 8, delta)
   avatar.root.position.y = damp(avatar.root.position.y, rootY, 8, delta)
-  avatar.root.position.z = damp(avatar.root.position.z, rootZ, intro.kind === 'run' ? 5 : 8, delta)
   avatar.root.rotation.x = damp(avatar.root.rotation.x, rootRotX, 8, delta)
-  avatar.root.rotation.y = damp(avatar.root.rotation.y, rootRotY, 8, delta)
+  if (roam?.active || roam?.returning || roam?.holding) {
+    const maxTurnPerSecond = roam.returning ? roam.returnTurnRate : roam.turnRate
+    avatar.root.rotation.y = rotateTowardsAngle(avatar.root.rotation.y, rootRotY, maxTurnPerSecond * delta)
+  } else {
+    avatar.root.rotation.y = damp(avatar.root.rotation.y, rootRotY, 8, delta)
+  }
   avatar.root.rotation.z = damp(avatar.root.rotation.z, rootRotZ, 8, delta)
   avatar.model.rotation.x = damp(avatar.model.rotation.x, modelRotX, 9, delta)
   avatar.model.rotation.z = damp(avatar.model.rotation.z, modelRotZ, 9, delta)
@@ -1650,6 +2275,27 @@ function animateRig(
     haloOpacity = .48
   }
 
+  if (state === 'music' || state === 'dance') {
+    const phrase = elapsed * 5.8 + rig.phase
+    const beat = Math.sin(phrase)
+    const pop = Math.max(0, Math.sin(phrase * 2)) ** 1.2
+    rootY += .04 + pop * .06
+    rootRotZ = p.attitude + beat * .08
+    spineRotX = -.03 + pop * .06
+    spineRotZ = beat * .16 * p.amplitude
+    headX = -.04 + pop * .05
+    headY = Math.sin(phrase * .5) * .28
+    headZ = -beat * .12
+    leftArmZ = -.36 + beat * .24
+    rightArmZ = .36 + beat * .24
+    leftElbowX = -.38 - pop * .18
+    rightElbowX = -.38 - pop * .18
+    rightShoulderX = -.16 + pop * .24
+    mouthScale = .85 + pop * 1.2
+    haloOpacity = .58 + pop * .16
+    scale = 1.03 + pop * .02
+  }
+
   if (handshake?.active) {
     const up = THREE.MathUtils.clamp(handshake.pointerY, -1, 1)
     spineRotX = .08
@@ -1683,8 +2329,10 @@ function animateRig(
 
 export function PetStage({ agents, activeId, state, syncing, semantic, onSelect, onHandshake, onStatePreview }: Props) {
   const mountRef = useRef<HTMLDivElement>(null)
+  const labelRefs = useRef<Partial<Record<PetId, HTMLButtonElement | null>>>({})
   const latestRef = useRef({ activeId, state, syncing, semantic, onSelect, onHandshake })
   const [hoveredHand, setHoveredHand] = useState<PetId | null>(null)
+  const [storyCaption, setStoryCaption] = useState<string | null>(null)
   useEffect(() => {
     latestRef.current = { activeId, state, syncing, semantic, onSelect, onHandshake }
   }, [activeId, state, syncing, semantic, onSelect, onHandshake])
@@ -1693,10 +2341,10 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
     const mount = mountRef.current
     if (!mount) return
     const scene = new THREE.Scene()
-    scene.fog = new THREE.FogExp2('#edf5ff', .038)
-    const camera = new THREE.PerspectiveCamera(27, 1, .1, 100)
-    camera.position.set(0, 2.1, 10.4)
-    camera.lookAt(0, .55, 0)
+    scene.fog = new THREE.FogExp2('#f3f6fb', .012)
+    const camera = new THREE.PerspectiveCamera(31, 1, .1, 100)
+    camera.position.set(.12, 1.86, 9.8)
+    camera.lookAt(.05, .68, -2.25)
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.8))
     renderer.setClearColor(0xf2f7ff, 0)
@@ -1704,40 +2352,42 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
     renderer.shadowMap.type = THREE.PCFSoftShadowMap
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
-    renderer.toneMappingExposure = 1.15
+    renderer.toneMappingExposure = .84
     mount.appendChild(renderer.domElement)
 
-    const hemi = new THREE.HemisphereLight('#ffffff', '#d6e4f3', 3.15)
-    const key = new THREE.DirectionalLight('#ffffff', 5.8)
-    key.position.set(-3.8, 6.4, 6.2); key.castShadow = true
+    const hemi = new THREE.HemisphereLight('#ffffff', '#cfd8e8', 1.45)
+    const key = new THREE.DirectionalLight('#fff7ed', 4.85)
+    key.position.set(-4.8, 6.8, 5.4); key.castShadow = true
     key.shadow.mapSize.set(2048, 2048)
     key.shadow.camera.near = .5
     key.shadow.camera.far = 18
-    const fill = new THREE.DirectionalLight('#dff1ff', 2.15)
-    fill.position.set(4, 3.5, 5)
-    const rim = new THREE.DirectionalLight('#c8d9ff', 3.05)
-    rim.position.set(5.6, 4.4, -4.6)
+    key.shadow.bias = -.00022
+    key.shadow.normalBias = .035
+    const fill = new THREE.DirectionalLight('#dceaff', .88)
+    fill.position.set(4.6, 3.2, 6.5)
+    const rim = new THREE.DirectionalLight('#d7e3ff', 2.65)
+    rim.position.set(5.6, 4.2, -5.4)
     scene.add(hemi, key, fill, rim)
 
     const floor = mesh(
-      new THREE.CircleGeometry(8.8, 96),
-      new THREE.MeshStandardMaterial({ color: '#f7fbff', roughness: .64, metalness: .02, transparent: true, opacity: .9 }),
+      new THREE.CircleGeometry(10.8, 128),
+      new THREE.MeshStandardMaterial({ color: '#edf1f7', roughness: .72, metalness: 0 }),
       [0, GROUND_Y, 0],
     )
     floor.rotation.x = -Math.PI / 2
     floor.receiveShadow = true
     scene.add(floor)
     const contact = mesh(
-      new THREE.CircleGeometry(7.6, 96),
-      new THREE.MeshBasicMaterial({ color: '#d9e8fb', transparent: true, opacity: .3, depthWrite: false }),
-      [0, GROUND_Y + .006, 0],
-      [1.2, .34, 1],
+      new THREE.CircleGeometry(8.8, 128),
+      new THREE.MeshBasicMaterial({ color: '#c7ceda', transparent: true, opacity: .08, depthWrite: false }),
+      [0, GROUND_Y + .004, -1.15],
+      [1.18, .32, 1],
     )
     contact.rotation.x = -Math.PI / 2
     scene.add(contact)
     const grid = new THREE.GridHelper(18, 36, '#c8d6e9', '#e2ebf6')
     grid.position.y = GROUND_Y + .012
-    ;(grid.material as THREE.Material).opacity = .12
+    ;(grid.material as THREE.Material).opacity = .025
     ;(grid.material as THREE.Material).transparent = true
     scene.add(grid)
 
@@ -1750,6 +2400,8 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
     const productionAvatars: ProductionAvatar[] = []
     let disposed = false
     const clock = new THREE.Clock()
+    const vehicleIntroStartedAt = clock.elapsedTime + INTRO_RUN_DURATION + .25
+    let stageVehicle: StageVehicle | null = null
     const loadingAvatars = agents
       .map(agent => {
         const fallback = rigs.find(rig => rig.id === agent.id)
@@ -1758,6 +2410,18 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
       .filter(Boolean) as LoadingAvatar[]
     loadingAvatars.forEach(loaderAvatar => scene.add(loaderAvatar.root))
     const loader = new GLTFLoader()
+    loader.load(
+      PORSCHE_MODEL_URL,
+      gltf => {
+        if (disposed) return
+        stageVehicle = prepareStageVehicle(gltf.scene, Math.max(vehicleIntroStartedAt, clock.elapsedTime + .2))
+        scene.add(stageVehicle.root)
+      },
+      undefined,
+      error => {
+        console.warn('Failed to load 911 Dakar stage vehicle', error)
+      },
+    )
     agents.forEach(agent => {
       const fallback = rigs.find(rig => rig.id === agent.id)
       const entry = petModelRegistry[agent.id]
@@ -1786,6 +2450,21 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
     // Live handshake grab: holds which avatar's hand is grabbed and the pointer's
     // normalized vertical position (+1 top … -1 bottom) so the arm can track it.
     let grab: { id: PetId; pointerY: number } | null = null
+    const cameraOrbit = {
+      dragging: false,
+      pointerId: -1,
+      startX: 0,
+      startY: 0,
+      startYaw: 0,
+      startPitch: 0,
+      yaw: 0,
+      pitch: 0,
+      targetYaw: 0,
+      targetPitch: 0,
+    }
+    let lastInteractionAt = 0
+    let lastActivityKey = ''
+    let lastStoryFrameKey = ''
     const normalizedY = (event: PointerEvent) => {
       const rect = renderer.domElement.getBoundingClientRect()
       return -((event.clientY - rect.top) / rect.height) * 2 + 1
@@ -1799,15 +2478,25 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
     }
     const onPointerDown = (event: PointerEvent) => {
       const hit = hitTest(event)
-      if (!hit) return
-      const id = hit.object.userData.agentId as PetId
-      latestRef.current.onSelect(id)
-      if (String(hit.object.userData.bodyPart).startsWith('hand')) {
+      lastInteractionAt = clock.elapsedTime
+      const bodyPart = hit ? String(hit.object.userData.bodyPart) : ''
+      const id = hit?.object.userData.agentId as PetId | undefined
+      if (id) latestRef.current.onSelect(id)
+      if (hit && id && bodyPart.startsWith('hand')) {
         grab = { id, pointerY: normalizedY(event) }
         renderer.domElement.setPointerCapture(event.pointerId)
         renderer.domElement.style.cursor = 'grabbing'
         latestRef.current.onHandshake(id)
+        return
       }
+      cameraOrbit.dragging = true
+      cameraOrbit.pointerId = event.pointerId
+      cameraOrbit.startX = event.clientX
+      cameraOrbit.startY = event.clientY
+      cameraOrbit.startYaw = cameraOrbit.targetYaw
+      cameraOrbit.startPitch = cameraOrbit.targetPitch
+      renderer.domElement.setPointerCapture(event.pointerId)
+      renderer.domElement.style.cursor = 'grabbing'
     }
     const onPointerMove = (event: PointerEvent) => {
       if (grab) {
@@ -1816,21 +2505,42 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
         renderer.domElement.style.cursor = 'grabbing'
         return
       }
+      if (cameraOrbit.dragging && cameraOrbit.pointerId === event.pointerId) {
+        const dx = event.clientX - cameraOrbit.startX
+        const dy = event.clientY - cameraOrbit.startY
+        cameraOrbit.targetYaw = THREE.MathUtils.clamp(
+          cameraOrbit.startYaw - dx * CAMERA_ORBIT_SENSITIVITY,
+          -CAMERA_ORBIT_YAW_LIMIT,
+          CAMERA_ORBIT_YAW_LIMIT,
+        )
+        cameraOrbit.targetPitch = THREE.MathUtils.clamp(
+          cameraOrbit.startPitch - dy * CAMERA_ORBIT_SENSITIVITY,
+          -CAMERA_ORBIT_PITCH_LIMIT,
+          CAMERA_ORBIT_PITCH_LIMIT,
+        )
+        renderer.domElement.style.cursor = 'grabbing'
+        return
+      }
       const hit = hitTest(event)
       const handId = hit && String(hit.object.userData.bodyPart).startsWith('hand') ? hit.object.userData.agentId as PetId : null
       setHoveredHand(handId)
-      renderer.domElement.style.cursor = handId ? 'grab' : hit ? 'pointer' : 'default'
+      renderer.domElement.style.cursor = handId ? 'grab' : hit ? 'pointer' : 'grab'
     }
-    const endGrab = () => {
+    const endPointerInteraction = (event?: PointerEvent) => {
       grab = null
+      if (cameraOrbit.dragging && event && renderer.domElement.hasPointerCapture(event.pointerId)) {
+        renderer.domElement.releasePointerCapture(event.pointerId)
+      }
+      cameraOrbit.dragging = false
+      cameraOrbit.pointerId = -1
       setHoveredHand(null)
       renderer.domElement.style.cursor = 'default'
     }
     renderer.domElement.addEventListener('pointerdown', onPointerDown)
     renderer.domElement.addEventListener('pointermove', onPointerMove)
-    renderer.domElement.addEventListener('pointerup', endGrab)
-    renderer.domElement.addEventListener('pointercancel', endGrab)
-    renderer.domElement.addEventListener('pointerleave', endGrab)
+    renderer.domElement.addEventListener('pointerup', endPointerInteraction)
+    renderer.domElement.addEventListener('pointercancel', endPointerInteraction)
+    renderer.domElement.addEventListener('pointerleave', endPointerInteraction)
 
     const resize = () => {
       const { width, height } = mount.getBoundingClientRect()
@@ -1846,29 +2556,88 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
     const observer = new ResizeObserver(resize)
     observer.observe(mount); resize()
     let animationId = 0
-    let lastInteractionAt = 0
-    let lastActivityKey = ''
     const cameraLook = new THREE.Vector3(0, .54, 0)
-    const pickAtlasRoamWaypoint = (avatar: ProductionAvatar, elapsed: number) => {
-      const homeX = avatar.baseX - .08
-      const lanes = [
-        { x: homeX, z: -1.45 },
-        { x: homeX - .42, z: -2.15 },
-        { x: homeX + .34, z: -2.55 },
-        { x: homeX - .18, z: -3.05 },
-        { x: homeX + .18, z: -1.88 },
-      ]
-      const current = new THREE.Vector2(avatar.root.position.x, avatar.root.position.z)
-      const options = lanes
-        .map((lane, index) => ({ ...lane, index, distance: current.distanceTo(new THREE.Vector2(lane.x, lane.z)) }))
-        .filter(lane => lane.distance > .38)
-      const lane = (options.length ? options : lanes)[Math.floor((elapsed * 997 + avatar.phase * 31) % (options.length || lanes.length))]
-      const dx = lane.x - avatar.root.position.x
-      const dz = lane.z - avatar.root.position.z
-      avatar.roam.targetX = lane.x
-      avatar.roam.targetZ = lane.z
-      avatar.roam.heading = Math.atan2(dx, dz)
-      avatar.roam.nextWaypointAt = elapsed + 3.8 + Math.random() * 2.6
+    const labelWorldPosition = new THREE.Vector3()
+    const labelScreenPosition = new THREE.Vector3()
+    const homeX = (avatar: ProductionAvatar) => avatar.baseX + (avatar.id === 'atlas' ? -.08 : 0)
+    const crowdBodies = (): CircleCollider[] => productionAvatars.map(avatar => ({
+      id: avatar.id,
+      x: avatar.root.position.x,
+      z: avatar.root.position.z,
+      radius: avatar.collisionRadius,
+    }))
+    const resolveAvatarPosition = (avatar: ProductionAvatar, point: StagePoint) => resolveCrowdPosition({
+      point,
+      selfId: avatar.id,
+      selfRadius: avatar.collisionRadius,
+      obstacles: crowdBodies(),
+      vehicle: stageVehicle?.collider ?? STAGE_VEHICLE_COLLIDER,
+      bounds: STAGE_ROAM_BOUNDS,
+      clearance: .34,
+    })
+    const updateAvatarLabel = (avatar: ProductionAvatar) => {
+      const label = labelRefs.current[avatar.id]
+      if (!label) return
+      const defaultX = homeX(avatar)
+      const shouldFollow = avatar.roam.active || avatar.roam.returning ||
+        avatar.roam.holding ||
+        Math.hypot(avatar.root.position.x - defaultX, avatar.root.position.z) > .12
+      if (!shouldFollow) {
+        label.dataset.following = 'false'
+        label.style.removeProperty('--label-x')
+        label.style.removeProperty('--label-y')
+        return
+      }
+      const { width, height } = mount.getBoundingClientRect()
+      avatar.root.updateWorldMatrix(true, false)
+      labelWorldPosition.set(0, .08, 0).applyMatrix4(avatar.root.matrixWorld)
+      labelScreenPosition.copy(labelWorldPosition).project(camera)
+      const x = (labelScreenPosition.x * .5 + .5) * width
+      const y = (-labelScreenPosition.y * .5 + .5) * height
+      label.dataset.following = 'true'
+      label.style.setProperty('--label-x', `${THREE.MathUtils.clamp(x, 72, width - 72).toFixed(1)}px`)
+      label.style.setProperty('--label-y', `${THREE.MathUtils.clamp(y, 112, height - 18).toFixed(1)}px`)
+    }
+    const setRoamTarget = (avatar: ProductionAvatar, desiredX: number, desiredZ: number, elapsed: number, hold = 1.35) => {
+      const profile = roamProfiles[avatar.id]
+      const currentX = avatar.root.position.x
+      const currentZ = avatar.root.position.z
+      const safeDesired = resolveAvatarPosition(avatar, { x: desiredX, z: desiredZ })
+      desiredX = safeDesired.x
+      desiredZ = safeDesired.z
+      const dx = desiredX - currentX
+      const dz = desiredZ - currentZ
+      const distance = Math.hypot(dx, dz)
+      if (distance < .03) {
+        avatar.roam.targetX = desiredX
+        avatar.roam.targetZ = desiredZ
+        avatar.roam.nextWaypointAt = elapsed + hold
+        return
+      }
+      const desiredHeading = Math.atan2(dx, dz)
+      const currentHeading = Number.isFinite(avatar.roam.heading) ? avatar.roam.heading : avatar.root.rotation.y
+      const nextHeading = clampHeadingStep(currentHeading, desiredHeading, profile.maxTurnStep)
+      const stepDistance = Math.min(distance, profile.stepDistance)
+      const steppedTarget = resolveAvatarPosition(avatar, {
+        x: currentX + Math.sin(nextHeading) * stepDistance,
+        z: currentZ + Math.cos(nextHeading) * stepDistance,
+      })
+      avatar.roam.heading = nextHeading
+      avatar.roam.targetX = steppedTarget.x
+      avatar.roam.targetZ = steppedTarget.z
+      avatar.roam.nextWaypointAt = elapsed + hold
+    }
+    const pickRoamWaypoint = (avatar: ProductionAvatar, elapsed: number) => {
+      const profile = roamProfiles[avatar.id]
+      const waypoint = profile.waypoints[avatar.roam.waypointIndex % profile.waypoints.length]
+      avatar.roam.waypointIndex = (avatar.roam.waypointIndex + 1) % profile.waypoints.length
+      setRoamTarget(
+        avatar,
+        homeX(avatar) + waypoint.x,
+        waypoint.z,
+        elapsed,
+        1.15 + Math.random() * .65,
+      )
     }
     const animate = () => {
       animationId = requestAnimationFrame(animate)
@@ -1876,9 +2645,39 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
       const elapsed = clock.elapsedTime
       const current = latestRef.current
       const activityKey = `${current.activeId}:${current.state}:${current.syncing ? 1 : 0}:${grab?.id ?? '-'}`
-      if (activityKey !== lastActivityKey) {
+      const activityChanged = activityKey !== lastActivityKey
+      if (activityChanged) {
+        if (lastActivityKey) lastInteractionAt = elapsed
         lastActivityKey = activityKey
-        if (current.state !== 'idle' || current.syncing || grab) lastInteractionAt = elapsed
+      }
+      const idleFor = elapsed - lastInteractionAt
+      const musicMode = current.state === 'music'
+      const musicTime = musicMode ? Math.max(0, elapsed - lastInteractionAt) : 0
+      const storyReady = current.state === 'idle' && !current.syncing && !grab &&
+        idleFor >= STORY_START_DELAY && productionAvatars.length === agents.length
+      const storyElapsed = Math.max(0, idleFor - STORY_START_DELAY)
+      const storyBeat = storyReady
+        ? storyBeats[Math.floor(storyElapsed / STORY_BEAT_DURATION) % storyBeats.length]
+        : null
+      const storyBeatTime = storyElapsed % STORY_BEAT_DURATION
+      const storyPhase = !storyBeat
+        ? null
+        : storyBeatTime < STORY_APPROACH_END
+          ? 'approach'
+          : storyBeatTime < STORY_PERFORM_END
+            ? 'perform'
+            : 'exit'
+      const storyFrameKey = musicMode ? 'music-stage' : storyBeat && storyPhase ? `${storyBeat.id}:${storyPhase}` : ''
+      const storyFrameChanged = storyFrameKey !== lastStoryFrameKey
+      if (storyFrameChanged) {
+        lastStoryFrameKey = storyFrameKey
+        setStoryCaption(
+          musicMode
+            ? '音乐播放中：四位 Agent 聚到车前，进入协同街舞舞台。'
+            : storyBeat
+            ? storyPhase === 'perform' ? storyBeat.caption : storyBeat.setup
+            : null,
+        )
       }
       const activeRig = rigs.find(rig => rig.id === current.activeId)
       for (let index = loadingAvatars.length - 1; index >= 0; index -= 1) {
@@ -1894,7 +2693,8 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
       rigs.forEach(rig => {
         if (productionAvatars.some(avatar => avatar.id === rig.id)) return
         let rigState: MotionState = 'idle'
-        if (current.syncing) rigState = rig.id === current.activeId ? 'speak' : 'social'
+        if (musicMode) rigState = 'music'
+        else if (current.syncing) rigState = rig.id === current.activeId ? 'speak' : 'social'
         else if (rig.id === current.activeId) rigState = current.state
         const targetDelta = activeRig ? THREE.MathUtils.clamp((activeRig.baseX - rig.baseX) * .11, -.42, .42) : 0
         const rigGrab = grab && grab.id === rig.id ? { active: true, pointerY: grab.pointerY } : null
@@ -1902,9 +2702,11 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
       })
       productionAvatars.forEach(avatar => {
         let avatarState: MotionState = 'idle'
-        if (current.syncing) avatarState = avatar.id === current.activeId ? 'speak' : 'social'
+        if (musicMode) avatarState = 'music'
+        else if (current.syncing) avatarState = avatar.id === current.activeId ? 'speak' : 'social'
         else if (avatar.id === current.activeId) avatarState = current.state
-        const targetDelta = activeRig ? THREE.MathUtils.clamp((activeRig.baseX - avatar.baseX) * .11, -.42, .42) : 0
+        let targetDelta = activeRig ? THREE.MathUtils.clamp((activeRig.baseX - avatar.baseX) * .11, -.42, .42) : 0
+        let storyMotion: StoryMotion | null = null
         let intro: IntroPhase = { kind: 'done' }
         const introElapsed = Math.max(0, elapsed - avatar.introStartedAt - avatar.introDelay)
         if (introElapsed < INTRO_RUN_DURATION) {
@@ -1919,46 +2721,149 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
           avatar.accentStartedAt = -1
           avatar.nextAccentAt = elapsed + 3 + Math.random() * 4
         }
-        const isAtlas = avatar.id === 'atlas'
-        const defaultX = avatar.baseX - .08
-        if (isAtlas && current.activeId === 'atlas' && current.state === 'return') {
+        const profile = roamProfiles[avatar.id]
+        const defaultX = homeX(avatar)
+        const returnRequested = current.activeId === avatar.id && current.state === 'return'
+        const storyActor = storyBeat?.actors[avatar.id]
+        const storyPartner = storyActor
+          ? productionAvatars.find(candidate => candidate.id === storyActor.partnerId)
+          : undefined
+        const walkToward = (destination: StagePoint, forceRetarget = false) => {
+          const distanceToStep = Math.hypot(
+            avatar.root.position.x - avatar.roam.targetX,
+            avatar.root.position.z - avatar.roam.targetZ,
+          )
+          const targetExpired = elapsed > avatar.roam.nextWaypointAt + 2.8
+          if (forceRetarget || !avatar.roam.active || distanceToStep < .08 || targetExpired) {
+            setRoamTarget(avatar, destination.x, destination.z, elapsed, .55)
+          }
+          avatar.roam.active = true
+          avatar.roam.returning = false
+          avatar.roam.holding = false
+          avatarState = 'walk'
+        }
+        if (musicMode && intro.kind === 'done') {
+          const formation = musicStageFormation[avatar.id]
+          const distanceToStage = Math.hypot(avatar.root.position.x - formation.x, avatar.root.position.z - formation.z)
+          if (distanceToStage > .22) {
+            walkToward(formation, activityChanged)
+          } else {
+            avatar.roam.active = false
+            avatar.roam.returning = false
+            avatar.roam.holding = true
+            avatar.roam.targetX = formation.x
+            avatar.roam.targetZ = formation.z
+            avatar.roam.heading = 0
+            avatarState = 'music'
+          }
+          targetDelta = Math.sin(musicTime * 1.2 + avatar.phase) * .12
+        } else if (returnRequested) {
           avatar.roam.active = false
           avatar.roam.returning = true
+          avatar.roam.holding = false
           avatar.roam.targetX = defaultX
           avatar.roam.targetZ = 0
-          avatar.roam.heading = Math.atan2(defaultX - avatar.root.position.x, -avatar.root.position.z)
-        } else if (isAtlas && avatar.roam.returning) {
+          avatar.roam.heading = clampHeadingStep(
+            Number.isFinite(avatar.roam.heading) ? avatar.roam.heading : avatar.root.rotation.y,
+            Math.atan2(defaultX - avatar.root.position.x, -avatar.root.position.z),
+            profile.maxTurnStep,
+          )
+          avatarState = 'return'
+        } else if (avatar.roam.returning) {
           const distanceHome = Math.hypot(avatar.root.position.x - defaultX, avatar.root.position.z)
           avatar.roam.targetX = defaultX
           avatar.roam.targetZ = 0
-          avatar.roam.heading = Math.atan2(defaultX - avatar.root.position.x, -avatar.root.position.z)
+          avatar.roam.heading = clampHeadingStep(
+            avatar.roam.heading,
+            Math.atan2(defaultX - avatar.root.position.x, -avatar.root.position.z),
+            profile.maxTurnStep,
+          )
+          avatarState = 'return'
           if (distanceHome < .08) {
             avatar.roam.returning = false
             avatar.roam.active = false
-            avatar.roam.nextWaypointAt = elapsed + 20
+            avatar.roam.holding = false
+            avatar.roam.nextWaypointAt = elapsed + profile.startDelay
+            avatar.root.position.x = defaultX
+            avatar.root.position.z = 0
           }
-        } else if (isAtlas && intro.kind === 'done' && current.state === 'idle' && !current.syncing && !grab) {
-          if (!avatar.roam.active && elapsed - lastInteractionAt > 20) {
+        } else if (storyBeat && storyPhase && intro.kind === 'done') {
+          if (storyActor && storyPhase === 'approach') {
+            walkToward(storyActor.destination, storyFrameChanged)
+          } else if (storyActor && storyPhase === 'perform') {
+            avatar.roam.active = false
+            avatar.roam.returning = false
+            avatar.roam.holding = true
+            avatar.roam.targetX = avatar.root.position.x
+            avatar.roam.targetZ = avatar.root.position.z
+            avatarState = 'social'
+            if (storyPartner) {
+              targetDelta = THREE.MathUtils.clamp(
+                (storyPartner.root.position.x - avatar.root.position.x) * .18,
+                -.58,
+                .58,
+              )
+              storyMotion = {
+                gesture: storyActor.gesture,
+                partnerX: storyPartner.root.position.x,
+                partnerZ: storyPartner.root.position.z,
+                intensity: THREE.MathUtils.smoothstep(
+                  storyBeatTime,
+                  STORY_APPROACH_END,
+                  STORY_APPROACH_END + 1.2,
+                ),
+              }
+            }
+          } else {
+            const distanceHome = Math.hypot(avatar.root.position.x - defaultX, avatar.root.position.z)
+            if (distanceHome > .12) {
+              walkToward({ x: defaultX, z: 0 }, storyFrameChanged)
+            } else {
+              avatar.roam.active = false
+              avatar.roam.returning = false
+              avatar.roam.holding = false
+              avatar.root.position.x = damp(avatar.root.position.x, defaultX, 8, delta)
+              avatar.root.position.z = damp(avatar.root.position.z, 0, 8, delta)
+            }
+          }
+        } else if (intro.kind === 'done' && current.state === 'idle' && !current.syncing && !grab) {
+          if (!avatar.roam.active && idleFor > profile.startDelay && elapsed > avatar.roam.nextWaypointAt) {
             avatar.roam.active = true
-            pickAtlasRoamWaypoint(avatar, elapsed)
+            avatar.roam.holding = false
+            pickRoamWaypoint(avatar, elapsed)
           }
           if (avatar.roam.active) {
             const distance = Math.hypot(avatar.root.position.x - avatar.roam.targetX, avatar.root.position.z - avatar.roam.targetZ)
-            if (distance < .12 || elapsed > avatar.roam.nextWaypointAt) pickAtlasRoamWaypoint(avatar, elapsed)
+            const waypointExpired = elapsed > avatar.roam.nextWaypointAt + 3.8
+            if ((distance < .08 && elapsed > avatar.roam.nextWaypointAt) || waypointExpired) {
+              pickRoamWaypoint(avatar, elapsed)
+            }
             avatarState = 'walk'
+          } else if (avatar.roam.holding) {
+            avatar.roam.targetX = avatar.root.position.x
+            avatar.roam.targetZ = avatar.root.position.z
           }
-        } else if (isAtlas && current.state !== 'return') {
+        } else if (avatar.roam.active) {
           avatar.roam.active = false
-          avatar.roam.returning = false
+          avatar.roam.holding = true
+          avatar.roam.targetX = avatar.root.position.x
+          avatar.roam.targetZ = avatar.root.position.z
+          avatar.roam.nextWaypointAt = elapsed + profile.startDelay
         }
         const avatarGrab = grab && grab.id === avatar.id ? { active: true, pointerY: grab.pointerY } : null
-        const roamMotion = isAtlas && (avatar.roam.active || avatar.roam.returning)
+        const roamMotion = avatar.roam.active || avatar.roam.returning || avatar.roam.holding
           ? {
               active: avatar.roam.active,
               returning: avatar.roam.returning,
+              holding: avatar.roam.holding,
               targetX: avatar.roam.targetX,
               targetZ: avatar.roam.targetZ,
               heading: avatar.roam.heading,
+              speed: profile.speed,
+              returnSpeed: profile.returnSpeed,
+              turnRate: musicMode ? 4.2 : profile.turnRate,
+              returnTurnRate: musicMode ? 4.2 : profile.returnTurnRate,
+              resolvePosition: (point: StagePoint) => resolveAvatarPosition(avatar, point),
             }
           : null
         animateProductionAvatar(
@@ -1972,23 +2877,54 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
           idleAccent,
           avatarGrab,
           roamMotion,
+          storyMotion,
         )
       })
-      const atlasAvatar = productionAvatars.find(avatar => avatar.id === 'atlas')
-      const spatialRoamView = Boolean(atlasAvatar?.roam.active && !atlasAvatar.roam.returning)
+      if (stageVehicle) animateStageVehicle(stageVehicle, elapsed, delta)
+      const spatialRoamView = productionAvatars.some(avatar =>
+        (avatar.roam.active || avatar.roam.holding) && !avatar.roam.returning,
+      )
       const defaultCameraX = activeRig ? activeRig.baseX * .045 : 0
-      const cameraTarget = spatialRoamView
-        ? { x: -.35, y: 4.35, z: 13.45, fov: 31.5, lookX: -.55, lookY: .35, lookZ: -1.55 }
-        : { x: defaultCameraX, y: 2.1, z: 10.4, fov: 27, lookX: defaultCameraX * .18, lookY: .54, lookZ: 0 }
-      camera.position.x = damp(camera.position.x, cameraTarget.x, 2.5, delta)
-      camera.position.y = damp(camera.position.y, cameraTarget.y, 2.2, delta)
-      camera.position.z = damp(camera.position.z, cameraTarget.z, 2.2, delta)
+      const cameraTarget = musicMode
+        ? {
+            x: Math.sin(musicTime * .72) * .68,
+            y: 2.38 + Math.max(0, Math.sin(musicTime * 2.35)) * .2,
+            z: 8.15 - Math.max(0, Math.sin(musicTime * 1.18)) * .58,
+            fov: 27.6 + Math.sin(musicTime * 1.7) * 1.6,
+            lookX: Math.sin(musicTime * .54) * .28,
+            lookY: .82 + Math.sin(musicTime * 1.4) * .08,
+            lookZ: .85,
+          }
+        : spatialRoamView
+        ? { x: -.24, y: 4.35, z: 12.8, fov: 32.8, lookX: -.2, lookY: .55, lookZ: .92 }
+        : { x: defaultCameraX + .12, y: 1.86, z: 9.8, fov: 31, lookX: defaultCameraX * .12 + .05, lookY: .68, lookZ: -2.25 }
+      cameraOrbit.yaw = damp(cameraOrbit.yaw, cameraOrbit.targetYaw, 7, delta)
+      cameraOrbit.pitch = damp(cameraOrbit.pitch, cameraOrbit.targetPitch, 7, delta)
+      const orbitLook = new THREE.Vector3(cameraTarget.lookX, cameraTarget.lookY, cameraTarget.lookZ)
+      const orbitOffset = new THREE.Vector3(
+        cameraTarget.x - cameraTarget.lookX,
+        cameraTarget.y - cameraTarget.lookY,
+        cameraTarget.z - cameraTarget.lookZ,
+      )
+      const orbitSpherical = new THREE.Spherical().setFromVector3(orbitOffset)
+      orbitSpherical.theta += cameraOrbit.yaw
+      orbitSpherical.phi = THREE.MathUtils.clamp(
+        orbitSpherical.phi + cameraOrbit.pitch,
+        .34,
+        Math.PI / 2 - .08,
+      )
+      orbitOffset.setFromSpherical(orbitSpherical)
+      const orbitCamera = orbitLook.clone().add(orbitOffset)
+      camera.position.x = damp(camera.position.x, orbitCamera.x, 2.5, delta)
+      camera.position.y = damp(camera.position.y, orbitCamera.y, 2.2, delta)
+      camera.position.z = damp(camera.position.z, orbitCamera.z, 2.2, delta)
       camera.fov = damp(camera.fov, cameraTarget.fov, 2.2, delta)
       camera.updateProjectionMatrix()
       cameraLook.x = damp(cameraLook.x, cameraTarget.lookX, 2.3, delta)
       cameraLook.y = damp(cameraLook.y, cameraTarget.lookY, 2.3, delta)
       cameraLook.z = damp(cameraLook.z, cameraTarget.lookZ, 2.3, delta)
       camera.lookAt(cameraLook)
+      productionAvatars.forEach(updateAvatarLabel)
       renderer.render(scene, camera)
     }
     animate()
@@ -1999,9 +2935,9 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
       observer.disconnect()
       renderer.domElement.removeEventListener('pointerdown', onPointerDown)
       renderer.domElement.removeEventListener('pointermove', onPointerMove)
-      renderer.domElement.removeEventListener('pointerup', endGrab)
-      renderer.domElement.removeEventListener('pointercancel', endGrab)
-      renderer.domElement.removeEventListener('pointerleave', endGrab)
+      renderer.domElement.removeEventListener('pointerup', endPointerInteraction)
+      renderer.domElement.removeEventListener('pointercancel', endPointerInteraction)
+      renderer.domElement.removeEventListener('pointerleave', endPointerInteraction)
       renderer.dispose()
       scene.traverse(object => {
         if (object instanceof THREE.Mesh) {
@@ -2020,19 +2956,22 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
   }, [agents])
 
   return (
-    <div className="pet-webgl-stage">
+    <div className={`pet-webgl-stage state-${state}`}>
       <div ref={mountRef} className="pet-canvas" aria-label="四个实时骨骼 Agent 的 WebGL 舞台" />
       <div className="role-badges" aria-label="角色能力标签">
         {agents.map(agent => <button key={agent.id} className={agent.id === activeId ? 'active' : ''} onClick={() => onSelect(agent.id)} style={{ '--pet-color': agent.color, '--badge-x': roleBadgeMeta[agent.id].x } as React.CSSProperties}>
-          <i>{roleBadgeMeta[agent.id].symbol}</i><span>{roleBadgeMeta[agent.id].title}</span>
+          <i><RoleBadgeIcon id={agent.id} /></i><span>{roleBadgeMeta[agent.id].title}</span>
         </button>)}
       </div>
       <div className="pet-labels">
-        {agents.map(agent => <button key={agent.id} className={agent.id === activeId ? 'active' : ''} onClick={() => onSelect(agent.id)} style={{ '--pet-color': agent.color } as React.CSSProperties}>
+        {agents.map((agent, index) => <button key={agent.id} ref={(node) => { labelRefs.current[agent.id] = node }} data-following="false" className={agent.id === activeId ? 'active' : ''} onClick={() => onSelect(agent.id)} style={{ '--pet-color': agent.color, gridColumn: index + 1 } as React.CSSProperties}>
           <i /><b>{agent.name}</b><span>{agent.role}</span>
         </button>)}
       </div>
       <div className="motion-monitor"><span className="monitor-dot" /><b>{stateLabels[state]}</b><small>{hasProductionModel('atlas') ? 'ATA PARTS-V3 · 7 MORPHS · SEMANTIC BONES' : 'PROCEDURAL RIG · GLB READY'}</small></div>
+      <div className="story-beat" data-visible={Boolean(storyCaption)}>
+        <small>LIVE STORY</small><span>{storyCaption}</span>
+      </div>
       <div className="gesture-hint" data-visible={Boolean(hoveredHand)}><span>↕</span> 按住手部上下移动 · 与它握手</div>
       <div className="motion-debug" aria-label="动作状态预览">
         {(Object.keys(stateLabels) as MotionState[]).map(key => <button key={key} className={state === key ? 'active' : ''} onClick={() => onStatePreview(key)}>{stateLabels[key]}</button>)}

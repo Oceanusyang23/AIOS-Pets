@@ -31,6 +31,7 @@ type SpeechRecognizer = {
   abort?: () => void
 }
 type SpeechRecognizerConstructor = new () => SpeechRecognizer
+type VoiceMode = 'idle' | 'listening' | 'thinking' | 'speaking' | 'interrupted'
 
 type Agent = {
   id: AgentId
@@ -119,7 +120,11 @@ const syncMessages: Message[] = [
   { agent: 'atlas', text: '共识已生成：「周六雨天城市漫游」。要为你保存吗？' },
 ]
 
-const quickPrompts = ['阿拓，原地高抬腿跑', '缪思，跳个舞', '米洛，转一圈']
+const quickPrompts = ['播放音乐，大家跳街舞', '阿拓，原地高抬腿跑', '缪思，跳个舞']
+const DUPLEX_RESTART_DELAY = 180
+const DUPLEX_INTERIM_INTERRUPT_CHARS = 2
+const DUPLEX_REPEAT_GUARD_MS = 1250
+const DUPLEX_ECHO_SIMILARITY = .62
 
 const atlasMotionSweep: MotionState[] = ['wake', 'listen', 'think', 'speak', 'social', 'handshake', 'dance', 'spin', 'march']
 
@@ -132,6 +137,7 @@ const motionDisplayName: Record<MotionState, string> = {
   social: '互聊',
   handshake: '握手',
   dance: '跳舞',
+  music: '街舞',
   spin: '旋转',
   march: '高抬腿',
   walk: '走动',
@@ -162,43 +168,43 @@ const rigDeltas: RigDelta[] = [
   },
   {
     id: 'nova',
-    version: 'baseline rig',
-    score: 54,
-    badge: '待迁移',
-    geometry: '单体模型为主 · 未做面部安全拆件',
-    expression: '无独立 facial morph · 眼鼻嘴细节仍跟随整体头部',
-    action: '骨骼动作可跑，但表情和手部语义细节不足',
-    risk: '头颈/手部大幅动作时仍可能出现僵硬、穿模或局部变形',
+    version: 'clean-v2',
+    score: 80,
+    badge: '已清权重',
+    geometry: '单体安全底模 · 35,923 vertices · 最多 4 骨骼影响',
+    expression: '7 个统一 facial morph · Eye/Jaw/end 主影响清零',
+    action: '已接入阿拓动作协议、独立步态、漫游、归位与群体避障',
+    risk: '尚未制作真实眼球/眼皮拆件；大幅表情仍受单体拓扑限制',
   },
   {
     id: 'muse',
-    version: 'baseline rig',
-    score: 52,
-    badge: '待迁移',
-    geometry: '单体模型为主 · 耳机/头发等附件未拆分校验',
-    expression: '无独立 facial morph · 音乐陶醉表情只能靠头身姿态模拟',
-    action: '跳舞/旋转可驱动，缺少眼睑、嘴角、头发附件的精细联动',
-    risk: '大幅摆头或舞蹈时附件与脸部关系仍需蒙皮重做',
+    version: 'clean-v2',
+    score: 79,
+    badge: '已清权重',
+    geometry: '单体安全底模 · 42,483 vertices · 最多 4 骨骼影响',
+    expression: '7 个统一 facial morph · 原眼骨 8,325 个主影响顶点已清零',
+    action: '已接入阿拓动作协议、音乐型步态、漫游、归位与群体避障',
+    risk: '耳机/头发仍未独立刚性绑定，极端舞蹈需继续拆件校验',
   },
   {
     id: 'milo',
-    version: 'baseline rig',
-    score: 50,
-    badge: '待迁移',
-    geometry: '单体模型为主 · 围裙/帽檐/杯子附件未拆分校验',
-    expression: '无独立 facial morph · 可爱眨眼/张嘴仍不够细腻',
-    action: '旋转/高抬腿可驱动，生活化小动作还偏机械',
-    risk: '帽檐、围裙边缘与手臂运动关系需要后续拆件和权重检查',
+    version: 'clean-v2',
+    score: 78,
+    badge: '已清权重',
+    geometry: '单体安全底模 · 38,773 vertices · 最多 4 骨骼影响',
+    expression: '7 个统一 facial morph · 原眼骨 5,992 个主影响顶点已清零',
+    action: '已接入阿拓动作协议、松弛步态、漫游、归位与群体避障',
+    risk: '帽檐、围裙和杯子仍需后续拆件与硬件附件绑定',
   },
 ]
 
 const actionCoverage = [
-  { label: '入场跑来', atlas: '脚步弹性 + 表情唤醒', baseline: '骨骼位移为主' },
-  { label: '招手 3s', atlas: '手臂 + 眨眼/微笑', baseline: '手臂动作，脸部静态' },
-  { label: 'Idle 随机', atlas: '眨眼/好奇/微笑 morph', baseline: '身体姿态循环' },
-  { label: '聆听/思考/对话', atlas: '嘴型/眯眼/好奇可混合', baseline: '头身动作模拟' },
-  { label: '握手跟随', atlas: '手部交互 + facial feedback', baseline: '手臂可跟随，反馈弱' },
-  { label: '跳舞/旋转/高抬腿', atlas: '动作 + 表情同步', baseline: '可执行但仍偏僵硬' },
+  { label: '入场跑来', atlas: '四角色：脚步弹性 + 表情唤醒', baseline: '左到右错峰到场' },
+  { label: '招手 3s', atlas: '四角色：手臂 + 眨眼/微笑', baseline: '统一三秒后转 idle' },
+  { label: 'Idle 随机', atlas: '四角色：7 morph 语义表情', baseline: '哈欠/挠头/插兜/听歌' },
+  { label: '聆听/思考/对话', atlas: '四角色：嘴型/眯眼/好奇混合', baseline: '按人格和语义参数变化' },
+  { label: '握手跟随', atlas: '四角色：手部跟随 + facial feedback', baseline: '鼠标/触摸实时上下跟手' },
+  { label: '漫游与归位', atlas: '四角色：独立步态与路径', baseline: '角色/车辆/边界三层避障' },
 ]
 
 const ttsProfiles: Record<AgentId, { rate: number; pitch: number; voiceSlot: number; preferred: string[] }> = {
@@ -210,7 +216,7 @@ const ttsProfiles: Record<AgentId, { rate: number; pitch: number; voiceSlot: num
 
 type VoiceMotionCommand = {
   agentId: AgentId
-  motion: Extract<MotionState, 'dance' | 'spin' | 'march' | 'return'>
+  motion: Extract<MotionState, 'dance' | 'music' | 'spin' | 'march' | 'return'>
   label: string
   response: string
   duration: number
@@ -234,12 +240,21 @@ function parseVoiceMotionCommand(text: string, fallback: AgentId): VoiceMotionCo
   const lower = text.toLowerCase()
   const agentId = pickAgentFromText(text, fallback)
   const name = agents.find(agent => agent.id === agentId)?.name ?? '我'
+  if (/(播放音乐|放音乐|来点音乐|音乐播放|开音乐|放首歌|来首歌|街舞|hip.?hop|break.?dance|dance party|music mode)/i.test(lower)) {
+    return {
+      agentId: 'muse',
+      motion: 'music',
+      label: '音乐街舞',
+      response: '缪思接管音响，所有互动暂停。四位伙伴集合，进入街舞舞台模式。',
+      duration: 15000,
+    }
+  }
   if (/(回来|回來|归位|歸位|回到原位|回默认|回默认位置|come back|return|back)/i.test(lower)) {
     return {
-      agentId: 'atlas',
+      agentId,
       motion: 'return',
       label: '回来',
-      response: '阿拓收到，马上跑回来。',
+      response: `${name}收到，马上回到默认位置。`,
       duration: 3400,
     }
   }
@@ -293,6 +308,27 @@ function chooseYouthfulVoice(
   return pool.length ? pool[fallbackSlot % pool.length].voice : undefined
 }
 
+function normalizeVoiceText(text: string) {
+  return text
+    .toLowerCase()
+    .replace(/[“”"'.。！？!?，,、\s]/g, '')
+    .trim()
+}
+
+function voiceTextSimilarity(a: string, b: string) {
+  const first = normalizeVoiceText(a)
+  const second = normalizeVoiceText(b)
+  if (!first || !second) return 0
+  const short = first.length <= second.length ? first : second
+  const long = first.length > second.length ? first : second
+  if (long.includes(short)) return short.length / long.length
+  let overlap = 0
+  for (const char of short) {
+    if (long.includes(char)) overlap += 1
+  }
+  return overlap / Math.max(long.length, 1)
+}
+
 function AgentAvatar({ agent, active, speaking, small = false }: { agent: Agent; active?: boolean; speaking?: boolean; small?: boolean }) {
   return (
     <div className={`agent-avatar ${active ? 'active' : ''} ${speaking ? 'speaking' : ''} ${small ? 'small' : ''}`}
@@ -316,7 +352,7 @@ function App() {
   const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [listening, setListening] = useState(false)
   const [transcript, setTranscript] = useState('')
-  const [voiceMode, setVoiceMode] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle')
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>('idle')
   const [speakingAgent, setSpeakingAgent] = useState<AgentId | null>(null)
   const [panel, setPanel] = useState<'chat' | 'harness' | 'topics'>('chat')
   const [syncing, setSyncing] = useState(false)
@@ -334,8 +370,14 @@ function App() {
   const drawerDrag = useRef<{ x: number; opened: boolean } | null>(null)
   const recognitionRef = useRef<SpeechRecognizer | null>(null)
   const voiceSessionRef = useRef(false)
+  const voiceStartingRef = useRef(false)
   const voiceRestartTimer = useRef<number | null>(null)
   const voiceResponseTimer = useRef<number | null>(null)
+  const voiceInterimCommitTimer = useRef<number | null>(null)
+  const spokenTextRef = useRef('')
+  const lastProcessedVoiceRef = useRef('')
+  const voiceDuplicateGuardTimer = useRef<number | null>(null)
+  const pendingBargeInRef = useRef(false)
   const active = useMemo(() => agents.find(a => a.id === activeId)!, [activeId])
   const modelReadiness = getModelReadiness()
 
@@ -345,6 +387,8 @@ function App() {
     if (motionTimer.current) window.clearTimeout(motionTimer.current)
     if (voiceRestartTimer.current) window.clearTimeout(voiceRestartTimer.current)
     if (voiceResponseTimer.current) window.clearTimeout(voiceResponseTimer.current)
+    if (voiceInterimCommitTimer.current) window.clearTimeout(voiceInterimCommitTimer.current)
+    if (voiceDuplicateGuardTimer.current) window.clearTimeout(voiceDuplicateGuardTimer.current)
     recognitionRef.current?.abort?.()
     window.speechSynthesis?.cancel()
   }, [])
@@ -419,6 +463,7 @@ function App() {
       return
     }
     if (interrupt) synth.cancel()
+    spokenTextRef.current = text
     const profile = ttsProfiles[agentId]
     const utterance = new SpeechSynthesisUtterance(text)
     utterance.lang = 'zh-CN'
@@ -434,11 +479,13 @@ function App() {
     }
     utterance.onend = () => {
       setSpeakingAgent(current => current === agentId ? null : current)
+      if (spokenTextRef.current === text) spokenTextRef.current = ''
       if (voiceSessionRef.current) setVoiceMode('listening')
       else setVoiceMode('idle')
     }
     utterance.onerror = () => {
       setSpeakingAgent(current => current === agentId ? null : current)
+      if (spokenTextRef.current === text) spokenTextRef.current = ''
     }
     synth.speak(utterance)
   }
@@ -448,6 +495,13 @@ function App() {
     const motionCommand = parseVoiceMotionCommand(text, activeId)
     if (motionCommand) {
       const nextSemantic = deriveSemanticMotion(text)
+      if (motionCommand.motion === 'music') {
+        timers.current.forEach(window.clearTimeout)
+        timers.current = []
+        clearMotionSweep()
+        setSyncing(false)
+        setDrawerOpen(false)
+      }
       setSemantic({ ...nextSemantic, energy: Math.max(nextSemantic.energy, .88), valence: Math.max(nextSemantic.valence, .78) })
       setActiveId(motionCommand.agentId)
       setVoiceMode('speaking')
@@ -505,16 +559,29 @@ function App() {
     timers.current.push(timer)
   }
 
-  const queueVoiceTurn = (rawText: string) => {
+  const queueVoiceTurn = (rawText: string, options: { fromBargeIn?: boolean } = {}) => {
     const text = rawText.trim()
     if (!text) return
+    if (normalizeVoiceText(lastProcessedVoiceRef.current) === normalizeVoiceText(text)) return
+    if (spokenTextRef.current && voiceTextSimilarity(text, spokenTextRef.current) > DUPLEX_ECHO_SIMILARITY) {
+      setTranscript('我在过滤角色回声，你可以继续说。')
+      return
+    }
+    lastProcessedVoiceRef.current = text
+    if (voiceDuplicateGuardTimer.current) window.clearTimeout(voiceDuplicateGuardTimer.current)
+    voiceDuplicateGuardTimer.current = window.setTimeout(() => {
+      if (normalizeVoiceText(lastProcessedVoiceRef.current) === normalizeVoiceText(text)) {
+        lastProcessedVoiceRef.current = ''
+      }
+    }, DUPLEX_REPEAT_GUARD_MS)
     window.speechSynthesis?.cancel()
+    spokenTextRef.current = ''
     setSpeakingAgent(null)
     if (voiceResponseTimer.current) window.clearTimeout(voiceResponseTimer.current)
     setTranscript(text)
-    setVoiceMode('thinking')
+    setVoiceMode(options.fromBargeIn ? 'interrupted' : 'thinking')
     transitionMotion('think', undefined, 'idle', 'voice')
-    voiceResponseTimer.current = window.setTimeout(() => answer(text), 620)
+    voiceResponseTimer.current = window.setTimeout(() => answer(text), options.fromBargeIn ? 220 : 520)
   }
 
   const submitVoice = (prompt?: string) => {
@@ -523,12 +590,18 @@ function App() {
 
   const stopVoiceSession = () => {
     voiceSessionRef.current = false
+    voiceStartingRef.current = false
+    pendingBargeInRef.current = false
     setListening(false)
     setVoiceMode('idle')
     if (voiceRestartTimer.current) window.clearTimeout(voiceRestartTimer.current)
-    recognitionRef.current?.stop()
+    if (voiceResponseTimer.current) window.clearTimeout(voiceResponseTimer.current)
+    if (voiceInterimCommitTimer.current) window.clearTimeout(voiceInterimCommitTimer.current)
+    if (voiceDuplicateGuardTimer.current) window.clearTimeout(voiceDuplicateGuardTimer.current)
+    recognitionRef.current?.abort?.()
     recognitionRef.current = null
     window.speechSynthesis?.cancel()
+    spokenTextRef.current = ''
     setSpeakingAgent(null)
     transitionMotion('idle', undefined, 'idle', 'voice')
     if (!transcript) setTranscript('')
@@ -536,11 +609,6 @@ function App() {
 
   const startVoiceSession = () => {
     if (voiceSessionRef.current) return
-    voiceSessionRef.current = true
-    setListening(true)
-    setVoiceMode('listening')
-    transitionMotion('listen', undefined, 'idle', 'voice')
-    setTranscript('持续聆听中，你可以直接说“阿拓，带我回家”。')
     const speechWindow = window as Window & {
       SpeechRecognition?: SpeechRecognizerConstructor
       webkitSpeechRecognition?: SpeechRecognizerConstructor
@@ -551,59 +619,101 @@ function App() {
       return
     }
 
-    const recognition = new Recognition()
-    recognition.lang = 'zh-CN'
-    recognition.continuous = true
-    recognition.interimResults = true
-    recognition.onresult = (event: SpeechEvent) => {
-      let interim = ''
-      let finalText = ''
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const result = event.results[index]
-        const text = result[0]?.transcript || ''
-        if (result.isFinal) finalText += text
-        else interim += text
-      }
-      if (finalText.trim()) queueVoiceTurn(finalText)
-      else if (interim.trim()) {
+    const commitInterimIfNeeded = (text: string) => {
+      if (voiceInterimCommitTimer.current) window.clearTimeout(voiceInterimCommitTimer.current)
+      voiceInterimCommitTimer.current = window.setTimeout(() => {
+        if (!voiceSessionRef.current || !pendingBargeInRef.current) return
+        pendingBargeInRef.current = false
+        queueVoiceTurn(text, { fromBargeIn: true })
+      }, 880)
+    }
+
+    const startRecognizer = () => {
+      if (!voiceSessionRef.current || voiceStartingRef.current) return
+      voiceStartingRef.current = true
+      const recognition = new Recognition()
+      recognition.lang = 'zh-CN'
+      recognition.continuous = true
+      recognition.interimResults = true
+      recognition.onresult = (event: SpeechEvent) => {
+        let interim = ''
+        let finalText = ''
+        for (let index = event.resultIndex; index < event.results.length; index += 1) {
+          const result = event.results[index]
+          const text = result[0]?.transcript || ''
+          if (result.isFinal) finalText += text
+          else interim += text
+        }
+        const interimText = interim.trim()
+        const finalSpeech = finalText.trim()
+
+        if (finalSpeech) {
+          if (voiceInterimCommitTimer.current) window.clearTimeout(voiceInterimCommitTimer.current)
+          const fromBargeIn = pendingBargeInRef.current
+          pendingBargeInRef.current = false
+          queueVoiceTurn(finalSpeech, { fromBargeIn })
+          return
+        }
+
+        if (!interimText) return
+        const isEcho = spokenTextRef.current && voiceTextSimilarity(interimText, spokenTextRef.current) > DUPLEX_ECHO_SIMILARITY
+        if (isEcho) {
+          setTranscript('FULL‑DUPLEX · 正在过滤角色回声')
+          return
+        }
+
+        if (spokenTextRef.current && normalizeVoiceText(interimText).length >= DUPLEX_INTERIM_INTERRUPT_CHARS) {
+          pendingBargeInRef.current = true
+          window.speechSynthesis?.cancel()
+          spokenTextRef.current = ''
+          setSpeakingAgent(null)
+          setVoiceMode('interrupted')
+          setTranscript(`打断：${interimText}`)
+          transitionMotion('listen', undefined, 'idle', 'voice')
+          commitInterimIfNeeded(interimText)
+          return
+        }
+
         setVoiceMode('listening')
-        setTranscript(interim.trim())
+        setTranscript(interimText)
         transitionMotion('listen', undefined, 'idle', 'voice')
       }
-    }
-    recognition.onend = () => {
-      recognitionRef.current = null
-      if (!voiceSessionRef.current) {
-        setListening(false)
-        return
-      }
-      voiceRestartTimer.current = window.setTimeout(() => {
-        if (!voiceSessionRef.current) return
-        recognitionRef.current = recognition
-        try {
-          recognition.start()
-        } catch {
-          flash('连续监听重启失败，请再点一次麦克风')
-          stopVoiceSession()
+      recognition.onend = () => {
+        voiceStartingRef.current = false
+        recognitionRef.current = null
+        if (!voiceSessionRef.current) {
+          setListening(false)
+          return
         }
-      }, 240)
-    }
-    recognition.onerror = event => {
-      if (event?.error === 'not-allowed' || event?.error === 'service-not-allowed') {
-        flash('麦克风权限未打开，允许后再点麦克风')
-        stopVoiceSession()
-        return
+        voiceRestartTimer.current = window.setTimeout(startRecognizer, DUPLEX_RESTART_DELAY)
       }
-      if (!voiceSessionRef.current) return
-      setTranscript('我还在，刚才那句没听清。')
+      recognition.onerror = event => {
+        voiceStartingRef.current = false
+        if (event?.error === 'not-allowed' || event?.error === 'service-not-allowed') {
+          flash('麦克风权限未打开，允许后再点麦克风')
+          stopVoiceSession()
+          return
+        }
+        if (!voiceSessionRef.current) return
+        setTranscript(event?.error === 'no-speech' ? 'FULL‑DUPLEX · 我还在听。' : '刚才那句没听清，我继续听。')
+      }
+      recognitionRef.current = recognition
+      try {
+        recognition.start()
+      } catch {
+        voiceStartingRef.current = false
+        flash('语音识别启动失败，请检查浏览器麦克风权限')
+        stopVoiceSession()
+      }
     }
-    recognitionRef.current = recognition
-    try {
-      recognition.start()
-    } catch {
-      flash('语音识别启动失败，请检查浏览器麦克风权限')
-      stopVoiceSession()
-    }
+
+    voiceSessionRef.current = true
+    pendingBargeInRef.current = false
+    setListening(true)
+    setVoiceMode('listening')
+    transitionMotion('listen', undefined, 'idle', 'voice')
+    setTranscript('FULL‑DUPLEX 已开启：我会持续听，你可以随时打断角色。')
+    startRecognizer()
   }
 
   const toggleListening = () => {
@@ -697,8 +807,8 @@ function App() {
             onStatePreview={(state) => transitionMotion(state, state === 'idle' ? undefined : 2300, 'idle', 'motion-lab')}
           />
 
-          <div className={`voice-console ${listening ? 'listening' : ''}`}>
-            <div className="voice-copy"><small>{speakingAgent ? `${agents.find(agent => agent.id === speakingAgent)?.name} 正在发声 · TTS` : listening ? `CONTINUOUS · ${voiceMode.toUpperCase()}` : `正在与 ${active.name} 对话`}</small><b>{transcript || `“${active.name}，我想……”`}</b></div>
+          <div className={`voice-console ${listening ? 'listening' : ''} ${voiceMode}`}>
+            <div className="voice-copy"><small>{speakingAgent ? `${agents.find(agent => agent.id === speakingAgent)?.name} 正在发声 · FULL‑DUPLEX 可打断` : listening ? `FULL‑DUPLEX · ${voiceMode === 'interrupted' ? 'BARGE‑IN' : voiceMode.toUpperCase()}` : `正在与 ${active.name} 对话`}</small><b>{transcript || `“${active.name}，我想……”`}</b></div>
             <div className="waveform">{[5,9,14,8,18,12,6,15,9,5,12,7].map((h, i) => <i key={i} style={{ height: h }} />)}</div>
             <button className="mic-button" onClick={toggleListening} aria-label={listening ? '结束连续语音' : '开始连续语音'}>{listening ? <Pause size={22} /> : <Mic size={22} />}</button>
           </div>
@@ -796,13 +906,13 @@ function App() {
             </div>
             <div className="rig-delta">
               <header>
-                <div><small>RIG DELTA</small><b>阿拓 v3 与其他角色优化差距</b></div>
-                <span>QA BASELINE</span>
+                <div><small>RIG MIGRATION</small><b>阿拓优化已迁移到四角色</b></div>
+                <span>CLEAN V2 · CROWD SAFE</span>
               </header>
               {rigDeltas.map(item => {
                 const agent = agents.find(candidate => candidate.id === item.id)!
                 return (
-                  <article key={item.id} className={`rig-delta-row ${item.id === 'atlas' ? 'optimized' : ''}`} style={{ '--delta': agent.color } as React.CSSProperties}>
+                  <article key={item.id} className="rig-delta-row optimized" style={{ '--delta': agent.color } as React.CSSProperties}>
                     <div className="rig-score">
                       <b>{item.score}</b><span>{item.badge}</span>
                     </div>
@@ -818,7 +928,7 @@ function App() {
               })}
             </div>
             <div className="action-coverage">
-              <header><small>ACTION COVERAGE</small><b>同一动作下的优化差异</b></header>
+              <header><small>ACTION COVERAGE</small><b>四角色统一动作协议与个性差异</b></header>
               {actionCoverage.map(item => (
                 <div key={item.label}>
                   <span>{item.label}</span>

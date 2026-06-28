@@ -18,7 +18,7 @@ type Props = {
 
 const stateLabels: Record<MotionState, string> = {
   idle: '待机', wake: '唤醒', listen: '聆听', think: '思考', speak: '对话', social: '互聊', handshake: '握手',
-  dance: '跳舞', spin: '旋转', march: '高抬腿', walk: '走动', return: '回来',
+  dance: '跳舞', music: '街舞', spin: '旋转', march: '高抬腿', walk: '走动', return: '回来',
 }
 
 const stateEffects: Record<MotionState, { symbol: string; label: string }> = {
@@ -30,6 +30,7 @@ const stateEffects: Record<MotionState, { symbol: string; label: string }> = {
   social: { symbol: '↔', label: '伙伴视线同步' },
   handshake: { symbol: '↕', label: '触觉确认' },
   dance: { symbol: '♪', label: '节拍律动' },
+  music: { symbol: '♫', label: '四人街舞舞台' },
   spin: { symbol: '⟳', label: '原地旋转' },
   march: { symbol: '▵', label: '高抬腿小跑' },
   walk: { symbol: '↝', label: '空间漫游' },

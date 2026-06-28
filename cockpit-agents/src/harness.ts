@@ -34,8 +34,8 @@ export const acceptanceScenarios = [
 ] as const
 
 export const motionHarness = {
-  protocol: ['idle', 'wake', 'listen', 'think', 'speak', 'social', 'handshake', 'dance', 'spin', 'march'],
-  interruptPriority: ['handshake', 'dance', 'spin', 'march', 'wake', 'listen', 'think', 'speak', 'social', 'idle'],
+  protocol: ['idle', 'wake', 'listen', 'think', 'speak', 'social', 'handshake', 'dance', 'music', 'spin', 'march'],
+  interruptPriority: ['music', 'handshake', 'dance', 'spin', 'march', 'wake', 'listen', 'think', 'speak', 'social', 'idle'],
   semanticInputs: {
     energy: '控制手势频率、说话节拍和动作幅度，范围 0–1',
     valence: '控制开放/收敛姿态与身体朝向，范围 0–1',

@@ -25,6 +25,7 @@ export const MOTION_PRIORITY: Record<MotionState, number> = {
   listen: 4,
   wake: 5,
   dance: 5,
+  music: 7,
   spin: 5,
   march: 5,
   walk: 2,

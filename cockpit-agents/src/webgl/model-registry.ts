@@ -21,9 +21,9 @@ export const standardBoneMap: Record<RigBoneName, string> = {
 
 export const petModelRegistry: Record<PetId, PetModelEntry> = {
   atlas: { id: 'atlas', glbUrl: '/models/atlas-rigged-parts-v3.glb?v=20260625-parts-v3', scale: 1, yOffset: 0, boneMap: standardBoneMap },
-  nova: { id: 'nova', glbUrl: '/models/nova.glb?v=20260623-rig-v2', scale: 1, yOffset: 0, boneMap: standardBoneMap },
-  muse: { id: 'muse', glbUrl: '/models/muse.glb?v=20260623-rig-v2', scale: 1, yOffset: 0, boneMap: standardBoneMap },
-  milo: { id: 'milo', glbUrl: '/models/milo.glb?v=20260623-rig-v2', scale: 1, yOffset: 0, boneMap: standardBoneMap },
+  nova: { id: 'nova', glbUrl: '/models/nova-rigged-clean-v2.glb?v=20260628-clean-v2', scale: 1, yOffset: 0, boneMap: standardBoneMap },
+  muse: { id: 'muse', glbUrl: '/models/muse-rigged-clean-v2.glb?v=20260628-clean-v2', scale: 1, yOffset: 0, boneMap: standardBoneMap },
+  milo: { id: 'milo', glbUrl: '/models/milo-rigged-clean-v2.glb?v=20260628-clean-v2', scale: 1, yOffset: 0, boneMap: standardBoneMap },
 }
 
 export const hasProductionModel = (id: PetId) => Boolean(petModelRegistry[id].glbUrl)

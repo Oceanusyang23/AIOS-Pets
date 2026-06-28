@@ -9,16 +9,26 @@
 .pet-webgl-stage::before {
   content: "";
   position: absolute;
-  left: 4%;
-  right: 4%;
-  bottom: 12%;
-  height: 46%;
+  left: 2%;
+  right: 2%;
+  bottom: 7%;
+  height: 54%;
   background:
-    radial-gradient(ellipse at 22% 78%, rgba(122, 214, 230, .2), transparent 42%),
-    radial-gradient(ellipse at 52% 76%, rgba(142, 162, 212, .14), transparent 48%),
-    radial-gradient(ellipse at 78% 76%, rgba(255, 194, 124, .12), transparent 44%);
-  filter: blur(22px);
+    radial-gradient(ellipse at 48% 88%, rgba(38, 53, 78, .14), transparent 42%),
+    radial-gradient(ellipse at 24% 82%, rgba(61, 194, 207, .08), transparent 35%),
+    radial-gradient(ellipse at 76% 82%, rgba(255, 190, 116, .07), transparent 38%);
+  filter: blur(24px);
   pointer-events: none;
+}
+
+.pet-webgl-stage.state-music::before {
+  background:
+    radial-gradient(ellipse at 50% 82%, rgba(90, 110, 255, .16), transparent 44%),
+    radial-gradient(ellipse at 30% 76%, rgba(56, 220, 239, .18), transparent 36%),
+    radial-gradient(ellipse at 72% 78%, rgba(204, 103, 255, .16), transparent 38%),
+    radial-gradient(ellipse at 48% 96%, rgba(31, 42, 68, .18), transparent 44%);
+  filter: blur(20px) saturate(1.2);
+  animation: pet-stage-light-sweep 2.4s ease-in-out infinite alternate;
 }
 
 .pet-webgl-stage::after {
@@ -28,8 +38,25 @@
   right: 8%;
   bottom: 11%;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(119, 143, 181, .22), transparent);
+  background: linear-gradient(90deg, transparent, rgba(82, 92, 116, .16), transparent);
   pointer-events: none;
+}
+
+.pet-webgl-stage.state-music::after {
+  height: 38%;
+  left: 16%;
+  right: 16%;
+  bottom: 20%;
+  background:
+    linear-gradient(68deg, transparent 0 33%, rgba(69, 218, 255, .12) 42%, transparent 55%),
+    linear-gradient(112deg, transparent 0 38%, rgba(190, 105, 255, .1) 48%, transparent 60%);
+  filter: blur(10px);
+  opacity: .9;
+}
+
+@keyframes pet-stage-light-sweep {
+  from { opacity: .68; transform: translateX(-1.2%) scale(1); }
+  to { opacity: 1; transform: translateX(1.2%) scale(1.02); }
 }
 
 .pet-canvas {
@@ -46,11 +73,12 @@
 
 .pet-labels {
   position: absolute;
-  left: 6%;
-  right: 6%;
-  bottom: 12px;
+  inset: 0;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
+  align-items: end;
+  box-sizing: border-box;
+  padding: 0 6% 12px;
   pointer-events: none;
 }
 
@@ -66,6 +94,8 @@
   cursor: pointer;
   transition: .25s;
   text-shadow: 0 1px 0 rgba(255,255,255,.85);
+  justify-self: center;
+  align-self: end;
 }
 
 .pet-labels button i {
@@ -91,48 +121,95 @@
 
 .role-badges {
   position: absolute;
-  inset: 0;
+  top: 13.8%;
+  left: 6.8%;
+  right: 6.8%;
+  height: 72px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: start;
+  column-gap: 4.2%;
   pointer-events: none;
 }
 
 .role-badges button {
   --pet-color: #24b8d4;
-  position: absolute;
-  top: 14.2%;
-  left: var(--badge-x);
-  transform: translateX(-50%);
+  position: relative;
   border: 0;
   background: transparent;
   display: grid;
-  grid-template-columns: 38px minmax(86px, 128px);
+  grid-template-columns: 42px minmax(112px, 178px);
   align-items: center;
-  gap: 9px;
+  gap: 12px;
+  justify-content: center;
   text-align: left;
   color: #2d4165;
   cursor: pointer;
   pointer-events: auto;
   text-shadow: 0 1px 0 rgba(255,255,255,.9);
+  width: 100%;
+  min-width: 0;
+  padding: 0;
 }
 
 .role-badges button i {
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-style: normal;
-  font-size: 22px;
   line-height: 1;
   color: white;
   background: linear-gradient(145deg, color-mix(in srgb, var(--pet-color) 88%, #fff), var(--pet-color));
   box-shadow: 0 10px 22px color-mix(in srgb, var(--pet-color) 20%, transparent), inset 0 1px 0 rgba(255,255,255,.55);
 }
 
+.role-badges button i svg {
+  display: block;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.role-badges button i .role-icon-fill {
+  fill: currentColor;
+  stroke: none;
+}
+
+.role-icon-atlas {
+  width: 24px;
+  height: 24px;
+}
+
+.role-icon-nova {
+  width: 24px;
+  height: 24px;
+  transform: translateY(-.5px);
+}
+
+.role-icon-muse {
+  width: 22px;
+  height: 22px;
+  transform: translateX(1px);
+}
+
+.role-icon-milo {
+  width: 23px;
+  height: 23px;
+  transform: translateY(-.5px);
+}
+
 .role-badges button span {
-  font-size: clamp(13px, 1vw, 17px);
-  line-height: 1.15;
+  font-size: clamp(15px, 1.14vw, 20px);
+  line-height: 1.08;
   font-weight: 800;
   letter-spacing: .01em;
+  white-space: pre-line;
 }
 
 .role-badges button.active span {
@@ -150,6 +227,16 @@
 .pet-labels button.active i {
   background: var(--pet-color);
   box-shadow: 0 0 10px color-mix(in srgb, var(--pet-color) 68%, transparent);
+}
+
+.pet-labels button[data-following="true"] {
+  position: absolute;
+  left: var(--label-x);
+  top: var(--label-y);
+  width: 108px;
+  margin: 0;
+  transform: translate(-50%, -100%);
+  z-index: 3;
 }
 
 .motion-monitor {
@@ -221,6 +308,53 @@
   margin-right: 5px;
 }
 
+.story-beat {
+  position: absolute;
+  left: 50%;
+  bottom: 64px;
+  width: min(560px, 62vw);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border: 1px solid rgba(76, 100, 137, .13);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .72);
+  box-shadow: 0 14px 34px rgba(54, 76, 111, .1);
+  color: #445873;
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  transition: opacity .35s ease, transform .35s ease;
+  pointer-events: none;
+  backdrop-filter: blur(20px);
+  z-index: 4;
+}
+
+.story-beat[data-visible="true"] {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.story-beat small {
+  flex: 0 0 auto;
+  color: #35b8ca;
+  font-family: 'DM Mono';
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: .11em;
+}
+
+.story-beat span {
+  overflow: hidden;
+  color: #425570;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .motion-debug {
   position: absolute;
   left: 50%;
@@ -261,10 +395,14 @@
   }
 
   .pet-labels {
-    bottom: 5px;
+    padding-bottom: 5px;
   }
 
   .motion-debug {
     top: 7px;
+  }
+
+  .story-beat {
+    bottom: 50px;
   }
 }
