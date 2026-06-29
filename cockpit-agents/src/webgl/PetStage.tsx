@@ -105,6 +105,7 @@ type LoadingAvatar = {
 type StageVehicle = {
   root: THREE.Group
   collider: OrientedBoxCollider
+  entered: boolean
   startedAt: number
   duration: number
   fromX: number
@@ -441,12 +442,12 @@ const STAGE_VEHICLE_Z = -6.35
 const STAGE_VEHICLE_YAW = -.5
 const STAGE_VEHICLE_VISUAL_YAW = STAGE_VEHICLE_YAW + Math.PI
 const STAGE_VEHICLE_LENGTH = 11.3
-const STAGE_VEHICLE_COLLIDER = {
-  x: STAGE_VEHICLE_X,
-  z: STAGE_VEHICLE_Z,
-  yaw: STAGE_VEHICLE_YAW,
-  halfX: 5.9,
-  halfZ: 1.95,
+const DISABLED_VEHICLE_COLLIDER: OrientedBoxCollider = {
+  x: 999,
+  z: 999,
+  yaw: 0,
+  halfX: 0,
+  halfZ: 0,
 }
 const STAGE_ROAM_BOUNDS = {
   minX: -6.35,
@@ -1255,6 +1256,7 @@ function prepareStageVehicle(gltfScene: THREE.Group, startedAt: number): StageVe
       halfX: scaledSize.x * .5 + .42,
       halfZ: scaledSize.z * .5 + .48,
     },
+    entered: false,
     startedAt,
     duration: 3.6,
     fromX: 10.8,
@@ -1265,7 +1267,7 @@ function prepareStageVehicle(gltfScene: THREE.Group, startedAt: number): StageVe
 
 function animateStageVehicle(vehicle: StageVehicle, elapsed: number, delta: number) {
   const localTime = elapsed - vehicle.startedAt
-  if (localTime < 0) {
+  if (!vehicle.entered || !Number.isFinite(vehicle.startedAt) || localTime < 0) {
     vehicle.root.visible = false
     return
   }
@@ -2147,6 +2149,10 @@ function animateProductionAvatar(
       const safePosition = roam.resolvePosition({ x: nextX, z: nextZ })
       avatar.root.position.x = safePosition.x
       avatar.root.position.z = safePosition.z
+    } else if (roam.holding) {
+      const safePosition = roam.resolvePosition({ x: rootX, z: rootZ })
+      avatar.root.position.x = damp(avatar.root.position.x, safePosition.x, 8, delta)
+      avatar.root.position.z = damp(avatar.root.position.z, safePosition.z, 8, delta)
     }
   } else {
     avatar.root.position.x = damp(avatar.root.position.x, rootX, 8, delta)
@@ -2400,7 +2406,6 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
     const productionAvatars: ProductionAvatar[] = []
     let disposed = false
     const clock = new THREE.Clock()
-    const vehicleIntroStartedAt = clock.elapsedTime + INTRO_RUN_DURATION + .25
     let stageVehicle: StageVehicle | null = null
     const loadingAvatars = agents
       .map(agent => {
@@ -2414,7 +2419,7 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
       PORSCHE_MODEL_URL,
       gltf => {
         if (disposed) return
-        stageVehicle = prepareStageVehicle(gltf.scene, Math.max(vehicleIntroStartedAt, clock.elapsedTime + .2))
+        stageVehicle = prepareStageVehicle(gltf.scene, Number.POSITIVE_INFINITY)
         scene.add(stageVehicle.root)
       },
       undefined,
@@ -2571,7 +2576,7 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
       selfId: avatar.id,
       selfRadius: avatar.collisionRadius,
       obstacles: crowdBodies(),
-      vehicle: stageVehicle?.collider ?? STAGE_VEHICLE_COLLIDER,
+      vehicle: stageVehicle?.entered ? stageVehicle.collider : DISABLED_VEHICLE_COLLIDER,
       bounds: STAGE_ROAM_BOUNDS,
       clearance: .34,
     })
@@ -2880,6 +2885,18 @@ export function PetStage({ agents, activeId, state, syncing, semantic, onSelect,
           storyMotion,
         )
       })
+      if (stageVehicle && !stageVehicle.entered) {
+        const avatarsReadyForVehicle = productionAvatars.length === agents.length &&
+          productionAvatars.every(avatar =>
+            elapsed >= avatar.introStartedAt + avatar.introDelay + INTRO_RUN_DURATION + INTRO_WAVE_DURATION + .45,
+          )
+        if (avatarsReadyForVehicle) {
+          stageVehicle.entered = true
+          stageVehicle.startedAt = elapsed + .35
+          stageVehicle.root.position.set(stageVehicle.fromX, 0, stageVehicle.z)
+          stageVehicle.root.visible = false
+        }
+      }
       if (stageVehicle) animateStageVehicle(stageVehicle, elapsed, delta)
       const spatialRoamView = productionAvatars.some(avatar =>
         (avatar.roam.active || avatar.roam.holding) && !avatar.roam.returning,

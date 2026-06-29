@@ -99,4 +99,18 @@ describe('multi-agent crowd collision', () => {
       expect(Math.hypot(localX - nearestX, localZ - nearestZ)).toBeGreaterThanOrEqual(radius + clearance - 1e-6)
     }
   })
+
+  it('separates held story or dance positions from neighboring agents', () => {
+    const result = resolveCrowdPosition({
+      point: { x: .92, z: 1.08 },
+      selfId: 'muse',
+      selfRadius: 1.2,
+      obstacles: [{ id: 'nova', x: .35, z: 1.08, radius: 1.2 }],
+      vehicle: { x: 999, z: 999, yaw: 0, halfX: 0, halfZ: 0 },
+      bounds: { minX: -6.35, maxX: 6.35, minZ: -7.65, maxZ: 2.35 },
+      clearance: .34,
+    })
+
+    expect(Math.hypot(result.x - .35, result.z - 1.08)).toBeGreaterThanOrEqual(2.74 - 1e-6)
+  })
 })
